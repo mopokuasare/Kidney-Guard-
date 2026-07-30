@@ -56,8 +56,31 @@ KidneyGuard was designed with the understanding that clinicians are often mobile
    ```
 4. Open [http://localhost:3000](http://localhost:3000) in your browser.
 
+### Connecting the CKD Prediction API
+
+The frontend talks to the FastAPI prediction service in [`Kindneyguard-backend/`](./Kindneyguard-backend).
+
+1. Configure the API URL (already scaffolded in `.env.local`):
+   ```bash
+   NEXT_PUBLIC_CKD_API_URL=http://localhost:8000
+   ```
+2. Start the backend (in a separate terminal):
+   ```bash
+   cd Kindneyguard-backend
+   pip install fastapi uvicorn joblib scikit-learn numpy pandas shap lime pdfplumber python-multipart
+   uvicorn ckd_api:app --reload --host 0.0.0.0 --port 8000
+   ```
+3. With both running, the **Predict Risk** page shows an "API Online" pill. Enter the 14 clinical
+   values (or upload a text-based lab PDF) and click **Run AI Prediction** to get a live risk
+   score, eGFR stage, and SHAP explainability.
+
+All API calls live in [`src/lib/ckdService.ts`](./src/lib/ckdService.ts) (native `fetch`, typed).
+A `savePrediction()` seam is stubbed there for **Supabase** persistence, which will be wired once
+database credentials are available.
+
 ## Roadmap
 
+- [ ] **Authentication**: Login and signup pages will be added (role-based access for Admin, Doctor, and Nurse).
 - [ ] **EHR Integration**: Seamlessly pull data from existing Electronic Health Records.
 - [ ] **Trend Analysis**: Visualize patient risk over time with interactive charting.
 - [ ] **Multi-language Support**: Localization for global clinical teams.

@@ -1,30 +1,42 @@
+'use client';
+
 import React from 'react';
-import { 
-  Activity, 
-  LayoutDashboard, 
-  Users, 
-  BarChart3, 
-  FileText, 
+import Link from 'next/link';
+import { usePathname } from 'next/navigation';
+import {
+  Activity,
+  LayoutDashboard,
+  Users,
+  BarChart3,
+  FileText,
   Settings,
   Plus
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-const SidebarItem = ({ 
-  icon: Icon, 
-  label, 
+const SidebarItem = ({
+  icon: Icon,
+  label,
+  href,
   active = false,
-  badge 
-}: { 
-  icon: any, 
-  label: string, 
+  badge,
+  onNavigate
+}: {
+  icon: any,
+  label: string,
+  href: string,
   active?: boolean,
-  badge?: string 
+  badge?: string,
+  onNavigate?: () => void
 }) => (
-  <div className={cn(
-    "flex items-center justify-between px-4 py-3 cursor-pointer transition-all duration-200 group",
-    active ? "bg-orange-500/10 border-r-4 border-orange-500" : "hover:bg-slate-800"
-  )}>
+  <Link
+    href={href}
+    onClick={onNavigate}
+    className={cn(
+      "flex items-center justify-between px-4 py-3 cursor-pointer transition-all duration-200 group",
+      active ? "bg-orange-500/10 border-r-4 border-orange-500" : "hover:bg-slate-800"
+    )}
+  >
     <div className="flex items-center gap-3">
       <Icon size={20} className={active ? "text-orange-500" : "text-slate-400 group-hover:text-white"} />
       <span className={cn(
@@ -39,7 +51,7 @@ const SidebarItem = ({
         {badge}
       </span>
     )}
-  </div>
+  </Link>
 );
 
 const SidebarSection = ({ title, children }: { title: string, children: React.ReactNode }) => (
@@ -51,18 +63,34 @@ const SidebarSection = ({ title, children }: { title: string, children: React.Re
   </div>
 );
 
-export const Sidebar = ({ 
-  isOpen, 
-  onClose 
-}: { 
-  isOpen?: boolean, 
-  onClose?: () => void 
+const MAIN_LINKS = [
+  { icon: Activity, label: 'Predict Risk', href: '/' },
+  { icon: LayoutDashboard, label: 'Dashboard', href: '/dashboard' },
+  { icon: Users, label: 'Patient Records', href: '/patients' },
+  { icon: BarChart3, label: 'Analytics', href: '/analytics' },
+];
+
+const REPORT_LINKS = [
+  { icon: FileText, label: 'Generate Reports', href: '/reports' },
+  { icon: Settings, label: 'Settings', href: '/settings' },
+];
+
+export const Sidebar = ({
+  isOpen,
+  onClose
+}: {
+  isOpen?: boolean,
+  onClose?: () => void
 }) => {
+  const pathname = usePathname();
+  const isActive = (href: string) =>
+    href === '/' ? pathname === '/' : pathname.startsWith(href);
+
   return (
     <>
       {/* Mobile Overlay */}
       {isOpen && (
-        <div 
+        <div
           className="fixed inset-0 bg-black/50 z-40 lg:hidden transition-opacity"
           onClick={onClose}
         />
@@ -73,7 +101,7 @@ export const Sidebar = ({
         isOpen ? "translate-x-0" : "-translate-x-full"
       )}>
         <div className="p-6 flex items-center justify-between">
-          <div className="flex items-center gap-3">
+          <Link href="/" onClick={onClose} className="flex items-center gap-3">
             <div className="w-8 h-8 bg-orange-500 rounded flex items-center justify-center text-white font-bold">
               K
             </div>
@@ -81,8 +109,8 @@ export const Sidebar = ({
               <h1 className="text-white font-bold text-lg leading-tight">KidneyGuard</h1>
               <p className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">Clinical AI · v2.1</p>
             </div>
-          </div>
-          <button 
+          </Link>
+          <button
             onClick={onClose}
             className="lg:hidden text-slate-400 hover:text-white p-1"
           >
@@ -92,18 +120,32 @@ export const Sidebar = ({
 
         <div className="flex-1 overflow-y-auto">
           <SidebarSection title="Main">
-            <SidebarItem icon={Activity} label="Predict Risk" active />
-            <SidebarItem icon={LayoutDashboard} label="Dashboard" />
-            <SidebarItem icon={Users} label="Patient Records" />
-            <SidebarItem icon={BarChart3} label="Analytics" />
+            {MAIN_LINKS.map((link) => (
+              <SidebarItem
+                key={link.href}
+                icon={link.icon}
+                label={link.label}
+                href={link.href}
+                active={isActive(link.href)}
+                onNavigate={onClose}
+              />
+            ))}
           </SidebarSection>
 
           <SidebarSection title="Reports">
-            <SidebarItem icon={FileText} label="Generate Reports" />
-            <SidebarItem icon={Settings} label="Settings" />
+            {REPORT_LINKS.map((link) => (
+              <SidebarItem
+                key={link.href}
+                icon={link.icon}
+                label={link.label}
+                href={link.href}
+                active={isActive(link.href)}
+                onNavigate={onClose}
+              />
+            ))}
           </SidebarSection>
         </div>
-        
+
         <div className="p-4 mt-auto">
           <div className="bg-slate-800/50 rounded-xl p-4 border border-slate-700">
             <p className="text-xs text-slate-400 mb-2">Need help?</p>

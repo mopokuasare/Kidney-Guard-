@@ -28,6 +28,15 @@ yarn-error.log*
 # vercel
 .vercel
 
+# python environment / caches (not the backend source itself)
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
