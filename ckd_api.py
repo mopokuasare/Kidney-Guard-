@@ -35,10 +35,9 @@ import joblib
 import numpy as np
 import pandas as pd
 from fastapi import FastAPI, HTTPException, UploadFile, File
+from pydantic import BaseModel, Field
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel,Field
-from fastapi.middleware.cors import CORSMiddleware
-39 from pydantic import BaseModel,Field
+39 from pydantic import BaseModel, Field
 40 
 41 def suggested_action(risk_prob):
 42     if risk_prob < 0.3:
