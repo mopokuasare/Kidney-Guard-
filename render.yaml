@@ -2,6 +2,6 @@ services:
 - type: web
   name: Kidney-Guard-
   env: python
-  buildCommand: cd KidneyGuard-backend && pip install -r requirements.txt
-  startCommand: cd KidneyGuard-backend && python -m uvicorn api:app --host 0.0.0.0 --port 10000
+  buildCommand: cd Kidneyguard-backend && pip install -r requirements.txt
+  startCommand: cd Kidneyguard-backend && python -m uvicorn api:app --host 0.0.0.0 --port 10000
   autoDeploy: true
