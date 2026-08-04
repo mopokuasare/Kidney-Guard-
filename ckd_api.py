@@ -43,7 +43,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 print("Loading model artifacts...")
 try:
-    model          = joblib.load(os.path.join(BASE_DIR, "ckd_model.pkl"))
+    model          = joblib.load(os.path.join(BASE_DIR, "ckd_action_fn.pkl"))
     scaler         = joblib.load(os.path.join(BASE_DIR, "ckd_scaler.pkl"))
     features       = joblib.load(os.path.join(BASE_DIR, "ckd_features.pkl"))
     shap_explainer = joblib.load(os.path.join(BASE_DIR, "ckd_shap_explainer.pkl"))
