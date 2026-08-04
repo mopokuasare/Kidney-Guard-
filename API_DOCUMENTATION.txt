@@ -1,0 +1,355 @@
+# CKD RISK PREDICTION API — Developer Documentation v2.2
+# For the Frontend Team (Next.js)
+# ============================================================
+# NEW IN v2.2: PDF lab report upload — no manual typing required
+# ============================================================
+
+## OVERVIEW
+The API now supports two ways for a doctor to get a CKD prediction:
+
+  OPTION 1 — Manual entry : Doctor types 14 values into a form
+  OPTION 2 — PDF upload   : Doctor uploads a lab result PDF
+                            System extracts values automatically
+
+Both options return the exact same output structure.
+
+## HOW TO START THE API
+  pip install fastapi uvicorn joblib scikit-learn numpy pandas shap lime pdfplumber python-multipart
+  uvicorn ckd_api:app --reload --host 0.0.0.0 --port 8000
+
+  Health check    : http://localhost:8000/
+  Interactive docs: http://localhost:8000/docs
+
+## ALL ENDPOINTS
+
+  GET  /                → Health check
+  GET  /features        → 12 model features with normal ranges
+  POST /predict         → Manual entry prediction
+  POST /predict/upload  → PDF upload prediction (NEW)
+  POST /extract         → PDF extract only — no prediction (NEW)
+  POST /predict/batch   → Multiple patients manual entry (max 50)
+  GET  /docs            → Interactive Swagger documentation
+
+============================================================
+OPTION 1 — MANUAL ENTRY
+============================================================
+
+POST http://localhost:8000/predict
+
+Request body (JSON):
+{
+  "age":  45,       "sex":  "male",
+  "hemo": 10.5,     "sc":   3.8,
+  "bu":   57.0,     "sod":  135.0,
+  "bgr":  148.0,    "wbcc": 8000.0,
+  "sg":   1.010,    "al":   1,
+  "pcv":  32.0,     "rbcc": 3.9,
+  "htn":  1,        "dm":   1
+}
+
+This is the same as before — no changes to this endpoint.
+
+============================================================
+OPTION 2 — PDF UPLOAD (NEW)
+============================================================
+
+POST http://localhost:8000/predict/upload
+
+This endpoint accepts a PDF file. The system reads the lab report,
+extracts all clinical values automatically, and returns the full
+prediction — the doctor does not need to type anything.
+
+=== HOW TO IMPLEMENT THE UPLOAD IN NEXT.JS ===
+
+Step 1 — Create a file input in your form:
+
+<input
+  type="file"
+  accept=".pdf"
+  onChange={handleFileUpload}
+/>
+
+Step 2 — Handle the upload and call the API:
+
+const handleFileUpload = async (event) => {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  // Validate it is a PDF
+  if (!file.name.endsWith('.pdf')) {
+    setError('Please upload a PDF file only.');
+    return;
+  }
+
+  setLoading(true);
+  setUploadStatus('Extracting values from lab report...');
+
+  const formData = new FormData();
+  formData.append('file', file);
+
+  try {
+    const response = await fetch('http://localhost:8000/predict/upload', {
+      method: 'POST',
+      body: formData
+      // Do NOT set Content-Type header — browser sets it automatically
+      // with the correct multipart boundary for file uploads
+    });
+
+    const result = await response.json();
+
+    if (!response.ok) {
+      setError(result.detail || 'Upload failed');
+      return;
+    }
+
+    if (result.extraction_status === 'incomplete') {
+      // Some values could not be extracted
+      // Show the doctor which fields are missing
+      setMissingFields(result.missing_fields);
+      setExtractedValues(result.extracted_values);
+      setUploadStatus('Some values could not be extracted. Please enter them manually.');
+      return;
+    }
+
+    // Full success — show prediction result
+    setRiskScore(result.prediction.ckd_risk_probability);
+    setRiskTier(result.risk_stratification.tier);
+    setColor(result.risk_stratification.color);
+    setAction(result.risk_stratification.suggested_action);
+    setEgfr(result.egfr);
+    setTopFeatures(result.shap_explanations.top_5);
+    setExtractedValues(result.extraction_info.extracted_values);
+    setConfidence(result.extraction_info.extraction_confidence);
+
+  } catch (err) {
+    setError('Could not connect to the prediction server.');
+  } finally {
+    setLoading(false);
+  }
+};
+
+=== AXIOS VERSION ===
+
+const handleFileUpload = async (event) => {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  const formData = new FormData();
+  formData.append('file', file);
+
+  try {
+    const response = await axios.post(
+      'http://localhost:8000/predict/upload',
+      formData,
+      { headers: { 'Content-Type': 'multipart/form-data' } }
+    );
+    const result = response.data;
+    // handle result...
+  } catch (error) {
+    const detail = error.response?.data?.detail || 'Upload failed';
+    setError(detail);
+  }
+};
+
+=== UPLOAD ENDPOINT RESPONSE ===
+
+SUCCESS (all values extracted):
+{
+  "prediction": {
+    "ckd_risk_probability": 78.5,
+    "ckd_risk_label": "78.5% CKD Risk",
+    "predicted_class": "CKD"
+  },
+  "risk_stratification": {
+    "tier": "High Risk",
+    "urgency": "HIGH",
+    "color": "#E67E22",
+    "suggested_action": "Further renal evaluation recommended."
+  },
+  "egfr": {
+    "value": 42.3,
+    "unit": "mL/min/1.73m²",
+    "stage": "G3b — Moderately to severely decreased",
+    "equation": "CKD-EPI 2021"
+  },
+  "shap_explanations": { ... },
+  "lime_explanations": { ... },
+  "explainability_comparison": { ... },
+  "disclaimer": "...",
+  "extraction_info": {
+    "status": "success",
+    "filename": "lab_report.pdf",
+    "extraction_confidence": 100.0,
+    "fields_extracted": 14,
+    "fields_expected": 14,
+    "extracted_values": {
+      "Haemoglobin (gms)": 10.5,
+      "Serum Creatinine (mgs/dL)": 3.8,
+      ...
+    },
+    "warning": null
+  }
+}
+
+INCOMPLETE EXTRACTION (some values missing):
+{
+  "extraction_status": "incomplete",
+  "extraction_confidence": 71.4,
+  "extracted_values": { ... what was found ... },
+  "missing_fields": ["pcv", "rbcc"],
+  "critical_missing": ["pcv", "rbcc"],
+  "message": "Could not extract 2 required field(s)..."
+}
+
+=== IMPORTANT UI REQUIREMENT — DOCTOR VERIFICATION ===
+
+⚠️ This is clinically critical and must be implemented.
+
+After a successful PDF upload, ALWAYS show the doctor the
+extracted values BEFORE showing the prediction result.
+
+The doctor must be able to confirm the values are correct.
+Lab reports from different hospitals have different formats
+and the extraction may occasionally misread a value.
+
+Recommended UI flow:
+
+1. Doctor uploads PDF
+2. System extracts values
+3. Show extracted values to doctor with a confirmation step:
+
+   "We extracted these values from your lab report.
+    Please verify they are correct before proceeding."
+
+   Haemoglobin       : 10.5 gms       [Edit]
+   Serum Creatinine  : 3.8 mgs/dL     [Edit]
+   Blood Urea        : 57.0 mgs/dL    [Edit]
+   ...
+
+   [Confirm and Predict]   [Cancel]
+
+4. Doctor reviews, edits if needed, clicks Confirm
+5. Show prediction result
+
+This two-step flow protects against extraction errors.
+
+=== EXTRACT ONLY ENDPOINT ===
+
+If you want to separate extraction from prediction:
+
+POST http://localhost:8000/extract
+
+Use this to first extract and show values for review,
+then call POST /predict with the (possibly corrected) values.
+
+const extractFromPDF = async (file) => {
+  const formData = new FormData();
+  formData.append('file', file);
+  const response = await axios.post(
+    'http://localhost:8000/extract',
+    formData,
+    { headers: { 'Content-Type': 'multipart/form-data' } }
+  );
+  return response.data;
+  // Returns: extracted_values, missing_fields, confidence
+};
+
+// After doctor reviews and confirms:
+const submitPrediction = async (confirmedValues) => {
+  const response = await axios.post(
+    'http://localhost:8000/predict',
+    confirmedValues
+  );
+  return response.data;
+};
+
+=== ERROR HANDLING FOR UPLOAD ===
+
+400 → File is not a PDF
+422 → PDF is image-based (scanned) — text cannot be extracted
+503 → pdfplumber not installed on server
+500 → Unexpected processing error
+
+Handle these in your UI:
+
+if (error.response?.status === 422) {
+  setError(
+    'This PDF appears to be a scanned image. ' +
+    'Please use the manual entry form instead.'
+  );
+}
+
+============================================================
+RESPONSE STRUCTURE — SAME FOR BOTH OPTIONS
+============================================================
+
+Both /predict and /predict/upload return the same structure:
+
+result.prediction.ckd_risk_probability  → number (0–100)
+result.prediction.predicted_class       → "CKD" or "Not CKD"
+
+result.risk_stratification.tier         → "Low/Moderate/High/Critical Risk"
+result.risk_stratification.urgency      → "LOW/MODERATE/HIGH/CRITICAL"
+result.risk_stratification.color        → hex color code
+result.risk_stratification.suggested_action → clinical action string
+
+result.egfr.value                       → number (mL/min/1.73m²)
+result.egfr.stage                       → "G1 — Normal..." etc
+result.egfr.equation                    → "CKD-EPI 2021"
+
+result.shap_explanations.top_5          → array of top 5 SHAP features
+result.lime_explanations.top_5          → array of top 5 LIME features
+result.explainability_comparison.feature_agreement → SHAP vs LIME table
+
+result.disclaimer                       → always display this
+
+Each feature in top_5:
+{
+  "feature":          "hemo",
+  "feature_name":     "Haemoglobin (gms)",
+  "shap_value":       0.1445,
+  "contribution_pct": 14.45,
+  "direction":        "Increases CKD risk"
+}
+
+============================================================
+RISK TIER COLOURS
+============================================================
+
+Low Risk      → #27AE60  green
+Moderate Risk → #F39C12  amber
+High Risk     → #E67E22  orange
+Critical Risk → #E74C3C  red
+
+============================================================
+ENVIRONMENT SETUP
+============================================================
+
+.env.local:
+  NEXT_PUBLIC_CKD_API_URL=http://localhost:8000
+
+Use localhost since everything runs on the same laptop.
+
+============================================================
+WHAT TO INSTALL
+============================================================
+
+pip install fastapi uvicorn joblib scikit-learn numpy pandas shap lime pdfplumber python-multipart
+
+All 15 files needed in the same folder:
+  ckd_api.py
+  ckd_model.pkl
+  ckd_scaler.pkl
+  ckd_features.pkl
+  ckd_lr.pkl
+  ckd_rf.pkl
+  ckd_gb.pkl
+  ckd_knn.pkl
+  ckd_shap_explainer.pkl
+  ckd_risk_fn.pkl
+  ckd_action_fn.pkl
+  ckd_train_data.pkl
+
+============================================================
+Questions? Contact Ernest.
+============================================================
