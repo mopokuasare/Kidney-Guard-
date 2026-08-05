@@ -45,7 +45,14 @@ def suggested_action(risk_prob):
         return "Medium Risk: Consult a doctor and monitor kidney function"
     else:
         return "High Risk: Please see a nephrologist immediately"
- 
+
+# Fix unpickling lookup for Uvicorn/Render
+import sys
+sys.modules['__main__'].suggested_action = suggested_action
+
+# Standard model loading
+import joblib
+model = joblib.load("model.pkl")
 
 # ── Load model artifacts ──────────────────────────────────────────────────────
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
