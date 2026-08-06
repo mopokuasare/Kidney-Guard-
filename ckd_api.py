@@ -52,7 +52,7 @@ sys.modules['__main__'].suggested_action = suggested_action
 
 # Standard model loading
 import joblib
-model = joblib.load("model.pkl")
+model = joblib.load("ckd_model.pkl")
 
 # ── Load model artifacts ──────────────────────────────────────────────────────
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
