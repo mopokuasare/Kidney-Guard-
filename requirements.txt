@@ -1,8 +1,24 @@
-fastapi
-uvicorn[standard]
-pydantic
-python-multipart
-scikit-learn
-joblib
-pandas
-numpy
+# Pinned to the exact versions the model artifacts were trained/saved with.
+# scikit-learn 1.8.0 is REQUIRED — the .pkl files were saved with 1.8.0 and
+# will NOT unpickle on other major versions (this was the Render crash cause).
+fastapi==0.141.1
+uvicorn[standard]==0.52.1
+pydantic==2.13.4
+python-multipart==0.0.32
+
+scikit-learn==1.8.0
+numpy==2.4.6
+pandas==3.0.5
+scipy==1.18.0
+joblib==1.5.3
+
+# Explainability (optional at runtime, but needed to unpickle the SHAP explainer)
+shap==0.52.0
+numba==0.66.0
+llvmlite==0.48.0
+cloudpickle==3.1.2
+slicer==0.0.8
+lime==0.2.0.1
+
+# PDF lab-report upload
+pdfplumber==0.11.10

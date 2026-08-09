@@ -46,33 +46,44 @@ def suggested_action(risk_prob):
     else:
         return "High Risk: Please see a nephrologist immediately"
 
-# Fix unpickling lookup for Uvicorn/Render
+# Fix unpickling lookup for Uvicorn / cloud servers.
+# Some artifacts were pickled from a notebook/script where these lived in
+# __main__, so we re-register them here before any joblib.load call.
 import sys
 sys.modules['__main__'].suggested_action = suggested_action
-
-# Standard model loading
-import joblib
-model = joblib.load("ckd_model.pkl")
 
 # ── Load model artifacts ──────────────────────────────────────────────────────
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-print("Loading model artifacts...")
+# Required artifacts — the API cannot serve predictions without these.
+print("Loading required model artifacts...")
 try:
-    model          = joblib.load(os.path.join(BASE_DIR, "ckd_action_fn.pkl"))
-    scaler         = joblib.load(os.path.join(BASE_DIR, "ckd_scaler.pkl"))
-    features       = joblib.load(os.path.join(BASE_DIR, "ckd_features.pkl"))
-    shap_explainer = joblib.load(os.path.join(BASE_DIR, "ckd_shap_explainer.pkl"))
-    X_train_smote  = joblib.load(os.path.join(BASE_DIR, "ckd_train_data.pkl"))
-    print(f"✅ All artifacts loaded")
+    model    = joblib.load(os.path.join(BASE_DIR, "ckd_model.pkl"))
+    scaler   = joblib.load(os.path.join(BASE_DIR, "ckd_scaler.pkl"))
+    features = joblib.load(os.path.join(BASE_DIR, "ckd_features.pkl"))
+    print(f"[OK] Core artifacts loaded")
     print(f"   Model features ({len(features)}): {features}")
 except Exception as e:
-    print(f"❌ Error loading artifacts: {e}")
+    print(f"[ERROR] Error loading core artifacts: {e}")
     raise
 
-# ── Initialise LIME explainer at startup ─────────────────────────────────────
+# Optional artifact — SHAP explainer. If it fails to load (e.g. shap not
+# installed or version mismatch), the API still serves predictions; only the
+# SHAP section of the response is degraded.
+print("Loading SHAP explainer...")
+try:
+    shap_explainer = joblib.load(os.path.join(BASE_DIR, "ckd_shap_explainer.pkl"))
+    SHAP_AVAILABLE = True
+    print("[OK] SHAP explainer ready")
+except Exception as e:
+    shap_explainer = None
+    SHAP_AVAILABLE = False
+    print(f"[WARN] SHAP not available: {e}")
+
+# ── Initialise LIME explainer at startup (optional) ──────────────────────────
 print("Initialising LIME explainer...")
 try:
+    X_train_smote = joblib.load(os.path.join(BASE_DIR, "ckd_train_data.pkl"))
     from lime import lime_tabular
     lime_explainer = lime_tabular.LimeTabularExplainer(
         training_data         = X_train_smote,
@@ -83,19 +94,19 @@ try:
         random_state          = 42
     )
     LIME_AVAILABLE = True
-    print("✅ LIME explainer ready")
+    print("[OK] LIME explainer ready")
 except Exception as e:
     LIME_AVAILABLE = False
-    print(f"⚠️  LIME not available: {e}")
+    print(f"[WARN] LIME not available: {e}")
 
 # ── Check pdfplumber availability ─────────────────────────────────────────────
 try:
     import pdfplumber
     PDF_AVAILABLE = True
-    print("✅ PDF processing ready")
+    print("[OK] PDF processing ready")
 except ImportError:
     PDF_AVAILABLE = False
-    print("⚠️  pdfplumber not installed. Run: pip install pdfplumber")
+    print("[WARN] pdfplumber not installed. Run: pip install pdfplumber")
 
 # ── FastAPI app ───────────────────────────────────────────────────────────────
 app = FastAPI(
@@ -131,7 +142,7 @@ Both options return the same complete output:
 | ROC-AUC | 1.0000 |
 | Brier Score | 0.0084 |
 
-⚠️ **Disclaimer:** Decision support only. Does not replace clinical diagnosis.
+[WARN] **Disclaimer:** Decision support only. Does not replace clinical diagnosis.
     """,
     version="2.2.0",
 )
@@ -334,6 +345,8 @@ def get_risk_info(prob: float) -> dict:
 
 def get_shap_contributions(X_scaled: np.ndarray) -> list:
     """SHAP — exact Shapley values using TreeExplainer."""
+    if not SHAP_AVAILABLE:
+        return [{"error": "SHAP explainer not available on this server."}]
     try:
         shap_vals = shap_explainer.shap_values(X_scaled)
         if isinstance(shap_vals, list):
@@ -406,7 +419,7 @@ def build_comparison(shap_contribs: list, lime_contribs: list) -> list:
                 "feature_name": FEATURE_LABELS.get(feat, feat),
                 "shap_rank":    s,
                 "lime_rank":    l,
-                "agreement":    "✅ Agree" if abs(s - l) <= 2 else "⚠️ Differ"
+                "agreement":    "[OK] Agree" if abs(s - l) <= 2 else "[WARN] Differ"
             })
     return comparison
 
@@ -553,8 +566,8 @@ def root():
             "pdf_upload":   "POST /predict/upload — upload PDF lab report"
         },
         "explainability": {
-            "shap": "✅ Available",
-            "lime": "✅ Available" if LIME_AVAILABLE else "❌ pip install lime"
+            "shap": "[OK] Available" if SHAP_AVAILABLE else "[ERROR] unavailable",
+            "lime": "[OK] Available" if LIME_AVAILABLE else "[ERROR] pip install lime"
         },
         "model": {
             "type":        "Calibrated Stacking Ensemble",
@@ -613,7 +626,7 @@ async def predict_from_pdf(file: UploadFile = File(...)):
     3. Runs the prediction
     4. Returns the full result
 
-    ⚠️ IMPORTANT: The frontend should always show the extracted values
+    [WARN] IMPORTANT: The frontend should always show the extracted values
     to the doctor for verification before displaying the final prediction.
     Extraction confidence is included in the response so the frontend
     can decide whether to show a review step.
