@@ -12,13 +12,17 @@ pandas==3.0.5
 scipy==1.18.0
 joblib==1.5.3
 
-# Explainability (optional at runtime, but needed to unpickle the SHAP explainer)
-shap==0.52.0
-numba==0.66.0
-llvmlite==0.48.0
-cloudpickle==3.1.2
-slicer==0.0.8
-lime==0.2.0.1
+# Explainability (SHAP/LIME) is intentionally DISABLED on the free 512 MB tier:
+# loading shap + numba + lime at startup exhausts memory and prevents the app
+# from binding its port in time. The code treats them as optional, so /predict,
+# eGFR and risk tiers still work — only the SHAP/LIME panels are unavailable.
+# To re-enable, upgrade to an instance with >=1 GB RAM and uncomment these:
+#   shap==0.52.0
+#   numba==0.66.0
+#   llvmlite==0.48.0
+#   cloudpickle==3.1.2
+#   slicer==0.0.8
+#   lime==0.2.0.1
 
 # PDF lab-report upload
 pdfplumber==0.11.10
