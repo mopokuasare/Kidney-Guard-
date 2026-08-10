@@ -4,6 +4,7 @@ import { AppShell } from '@/components/AppShell';
 import { SelectField } from '@/components/SelectField';
 import { PageHeader, Panel, StatPill } from '@/components/ui';
 import { HBarChart, DonutChart, Sparkline } from '@/components/charts';
+import { PatientTrend } from '@/components/PatientTrend';
 import {
   BarChart3,
   Users,
@@ -46,6 +47,9 @@ export default function Analytics() {
         title="Analytics"
         subtitle="Clinical insight & model quality assurance"
       />
+
+      {/* Real per-patient risk trend (Supabase-backed) */}
+      <PatientTrend />
 
       {/* Filters */}
       <Panel title="Filters" icon={Filter} className="mb-6">

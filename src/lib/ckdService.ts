@@ -1,3 +1,5 @@
+import { getSupabaseBrowser } from '@/lib/supabase/client';
+
 const API_BASE =
   process.env.NEXT_PUBLIC_CKD_API_URL || 'http://localhost:8000';
 
@@ -322,12 +324,90 @@ export const formatResult = (resp: PredictionResponse | null): FormattedResult |
 
 
 
+/* ── Prediction history (Supabase) ─────────────────────────────────────────── */
+
+export interface PredictionRow {
+  id: string;
+  patient_name: string | null;
+  patient_ref: string | null;
+  age: number | null;
+  sex: string | null;
+  risk_probability: number | null;
+  predicted_class: string | null;
+  tier: string | null;
+  egfr: number | null;
+  egfr_stage: string | null;
+  inputs: PatientInput | null;
+  created_at: string;
+}
+
+/**
+ * Persist a completed prediction. No-ops silently when Supabase isn't
+ * configured or no user is signed in, so the prediction flow never breaks.
+ */
 export const savePrediction = async (
-  _input: PatientInput,
-  _result: PredictionResponse
+  input: PatientInput,
+  result: PredictionResponse,
+  meta?: { patientName?: string; patientRef?: string }
 ): Promise<void> => {
-  // no-op until Supabase is configured
-  return;
+  const supabase = getSupabaseBrowser();
+  if (!supabase) return;
+  const { data: userData } = await supabase.auth.getUser();
+  const uid = userData.user?.id;
+  if (!uid) return;
+
+  await supabase.from('predictions').insert({
+    user_id: uid,
+    patient_name: meta?.patientName?.trim() || null,
+    patient_ref: meta?.patientRef?.trim() || null,
+    age: input.age,
+    sex: input.sex,
+    risk_probability: result.prediction?.ckd_risk_probability ?? null,
+    predicted_class: result.prediction?.predicted_class ?? null,
+    tier: result.risk_stratification?.tier ?? null,
+    egfr: result.egfr?.value ?? null,
+    egfr_stage: result.egfr?.stage ?? null,
+    inputs: input,
+  });
+};
+
+export const getRecentPredictions = async (limit = 10): Promise<PredictionRow[]> => {
+  const supabase = getSupabaseBrowser();
+  if (!supabase) return [];
+  const { data } = await supabase
+    .from('predictions')
+    .select('*')
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  return (data as PredictionRow[]) ?? [];
+};
+
+/** All predictions for one patient (by name), oldest→newest for trend charts. */
+export const getPatientHistory = async (name: string): Promise<PredictionRow[]> => {
+  const supabase = getSupabaseBrowser();
+  if (!supabase || !name) return [];
+  const { data } = await supabase
+    .from('predictions')
+    .select('*')
+    .ilike('patient_name', name)
+    .order('created_at', { ascending: true });
+  return (data as PredictionRow[]) ?? [];
+};
+
+/** Distinct patient names that have at least one saved prediction. */
+export const getDistinctPatients = async (): Promise<string[]> => {
+  const supabase = getSupabaseBrowser();
+  if (!supabase) return [];
+  const { data } = await supabase
+    .from('predictions')
+    .select('patient_name, created_at')
+    .not('patient_name', 'is', null)
+    .order('created_at', { ascending: false })
+    .limit(500);
+  const names = (data ?? [])
+    .map((r: { patient_name: string | null }) => r.patient_name)
+    .filter((n): n is string => Boolean(n));
+  return Array.from(new Set(names));
 };
 
 

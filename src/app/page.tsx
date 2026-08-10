@@ -18,6 +18,9 @@ import {
   type PatientInput,
   type PredictionResponse,
 } from '@/lib/ckdService';
+import { generateSummaryPdf } from '@/lib/pdf';
+import { useT } from '@/lib/i18n';
+import { useAuth } from '@/lib/auth';
 import {
   RefreshCw,
   Activity,
@@ -36,6 +39,7 @@ import {
   XCircle,
   Wifi,
   WifiOff,
+  FileDown,
 } from 'lucide-react';
 
 type FormState = {
@@ -65,6 +69,8 @@ const EMPTY_FORM: FormState = {
 type FieldErrors = Partial<Record<keyof PatientInput, string>>;
 
 export default function PredictRisk() {
+  const { t } = useT();
+  const { profile } = useAuth();
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [comorbidities, setComorbidities] = useState({
     hypertension: false, diabetes: false, coronary: false, pedalEdema: false, anemia: false,
@@ -129,7 +135,8 @@ export default function PredictRisk() {
       return;
     }
     setResult(res.data);
-    await savePrediction(payload as PatientInput, res.data); // Supabase seam (no-op for now)
+    // Persist to Supabase (no-op if unconfigured / signed out)
+    await savePrediction(payload as PatientInput, res.data, { patientName: form.name });
     setTimeout(() => resultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
   };
 
@@ -194,8 +201,8 @@ export default function PredictRisk() {
   return (
     <AppShell>
       <PageHeader
-        title="Risk Assessment"
-        subtitle="Input routine lab values for AI prediction"
+        title={t('predict.title')}
+        subtitle={t('predict.subtitle')}
         actions={
           <>
             {/* API health pill */}
@@ -209,18 +216,18 @@ export default function PredictRisk() {
               }`}
             >
               {online == null ? <Loader2 size={13} className="animate-spin" /> : online ? <Wifi size={13} /> : <WifiOff size={13} />}
-              {online == null ? 'Checking' : online ? 'API Online' : 'API Offline'}
+              {online == null ? t('status.checking') : online ? t('status.online') : t('status.offline')}
             </span>
             <button
               onClick={handleReset}
               className="flex-1 lg:flex-none flex items-center justify-center gap-2 text-slate-500 hover:text-slate-900 transition-colors text-xs font-medium py-2"
             >
               <RefreshCw size={16} />
-              Reset
+              {t('predict.reset')}
             </button>
             <label className="flex-2 lg:flex-none flex items-center justify-center gap-2 bg-accent hover:bg-accent-hover text-white px-4 py-2 rounded-lg transition-all font-bold text-xs shadow-lg shadow-accent/20 cursor-pointer">
               {pdfBusy ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />}
-              Upload Lab PDF
+              {t('predict.uploadPdf')}
               <input ref={fileRef} type="file" accept=".pdf" className="hidden" onChange={handlePdf} disabled={pdfBusy} />
             </label>
           </>
@@ -261,7 +268,7 @@ export default function PredictRisk() {
             <section>
               <div className="flex items-center gap-2 mb-4">
                 <ClipboardList size={14} className="text-slate-400" />
-                <h2 className="text-[9px] font-bold text-slate-500 uppercase tracking-widest">Demographics</h2>
+                <h2 className="text-[9px] font-bold text-slate-500 uppercase tracking-widest">{t('predict.demographics')}</h2>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
                 <InputField label="Patient Name" placeholder="John Doe" value={form.name} onChange={(e) => set('name', e.target.value)} />
@@ -284,7 +291,7 @@ export default function PredictRisk() {
             <section>
               <div className="flex items-center gap-2 mb-6">
                 <Heart size={16} className="text-slate-400" />
-                <h2 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Vital Signs</h2>
+                <h2 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">{t('predict.vitals')}</h2>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
                 <InputField label="Blood Pressure" placeholder="80" unit="mmHg" type="number" value={form.bp} onChange={(e) => set('bp', e.target.value)} />
@@ -309,7 +316,7 @@ export default function PredictRisk() {
             <section>
               <div className="flex items-center gap-2 mb-4">
                 <FlaskConical size={14} className="text-slate-400" />
-                <h2 className="text-[9px] font-bold text-slate-500 uppercase tracking-widest">Laboratory Biomarkers</h2>
+                <h2 className="text-[9px] font-bold text-slate-500 uppercase tracking-widest">{t('predict.labs')}</h2>
               </div>
               <div className="grid grid-cols-2 lg:grid-cols-2 gap-x-3 md:gap-x-12 gap-y-4 md:gap-y-6">
                 <InputField label="Blood Glucose" placeholder="148" unit="mg/dL" type="number" value={form.bgr} onChange={(e) => set('bgr', e.target.value)} error={errors.bgr} />
@@ -328,7 +335,7 @@ export default function PredictRisk() {
             <section>
               <div className="flex items-center gap-2 mb-4">
                 <Stethoscope size={14} className="text-slate-400" />
-                <h2 className="text-[9px] font-bold text-slate-500 uppercase tracking-widest">Comorbidities</h2>
+                <h2 className="text-[9px] font-bold text-slate-500 uppercase tracking-widest">{t('predict.comorbidities')}</h2>
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-8">
                 <ToggleButton label="Hypertension" value={comorbidities.hypertension} onChange={() => toggleComorbidity('hypertension')} />
@@ -362,7 +369,7 @@ export default function PredictRisk() {
                 className="w-full sm:w-auto flex items-center justify-center gap-2 text-slate-400 hover:text-red-500 transition-colors text-sm font-medium py-2"
               >
                 <Trash2 size={18} />
-                Clear Form
+                {t('predict.clear')}
               </button>
               <button
                 type="submit"
@@ -370,7 +377,7 @@ export default function PredictRisk() {
                 className="w-full sm:w-auto flex items-center justify-center gap-3 bg-sidebar-bg hover:bg-slate-800 disabled:opacity-60 disabled:cursor-not-allowed text-white px-8 py-3.5 rounded-xl transition-all font-bold shadow-xl shadow-slate-900/20"
               >
                 {loading ? <Loader2 size={20} className="animate-spin" /> : <BrainCircuit size={20} />}
-                {loading ? 'Analyzing…' : 'Run AI Prediction'}
+                {loading ? t('predict.analyzing') : t('predict.run')}
               </button>
             </div>
           </form>
@@ -380,8 +387,25 @@ export default function PredictRisk() {
       {/* Result or fallback disclaimer */}
       {result ? (
         <div ref={resultRef} className="mt-6 scroll-mt-6">
-          <div className="flex items-center gap-2 mb-4 text-emerald-600 font-bold text-sm">
-            <CheckCircle2 size={18} /> Prediction complete
+          <div className="flex items-center justify-between gap-2 mb-4">
+            <div className="flex items-center gap-2 text-emerald-600 font-bold text-sm">
+              <CheckCircle2 size={18} /> {t('predict.complete')}
+            </div>
+            <button
+              onClick={() =>
+                generateSummaryPdf(result, {
+                  patientName: form.name,
+                  age: form.age,
+                  sex: form.sex,
+                  clinician: profile?.full_name ?? undefined,
+                  inputs: buildPayload() as Record<string, number | string | undefined>,
+                })
+              }
+              className="flex items-center gap-2 bg-accent hover:bg-accent-hover text-white px-4 py-2 rounded-lg transition-all font-bold text-xs shadow-lg shadow-accent/20"
+            >
+              <FileDown size={16} />
+              {t('predict.exportPdf')}
+            </button>
           </div>
           <PredictionResult response={result} />
         </div>
