@@ -236,13 +236,13 @@ them fresh from disk.
 | | Old (broken label) | Retrained (KDIGO) |
 |---|---|---|
 | Prevalence | 43.2% | **17.0%** |
-| Threshold | 0.4439 | **0.0875** (recall-oriented) |
+| Threshold | 0.4439 | **0.1298** (recall-oriented) |
 | ROC-AUC | 0.9225 | **0.8221** |
 | PR-AUC | 0.9230 | 0.6424 |
-| Accuracy | 0.8697 | 0.622 |
-| Precision | 0.8498 | 0.293 |
-| Recall | 0.8483 | **0.858** |
-| Specificity | 0.8860 | 0.574 |
+| Accuracy | 0.8697 | 0.770 |
+| Precision | 0.8498 | 0.403 |
+| Recall | 0.8483 | **0.726** |
+| Specificity | 0.8860 | 0.779 |
 | Brier | 0.1034 | 0.0963 |
 | **All-normal 52yo** | **74.2%** | **5.9%** |
 | Creatinine monotonic | no (1.00 < 0.83) | **yes** |
@@ -262,18 +262,18 @@ than a false alarm. Threshold selected on the calibration set, evaluated on test
 | Target | threshold | recall | precision | specificity | missed | flagged |
 |---|---|---|---|---|---|---|
 | F1-optimal | 0.3130 | 0.476 | 0.635 | 0.944 | 111 | 159 |
-| recall ≥ 70% | 0.1298 | 0.726 | 0.403 | 0.779 | 58 | 382 |
-| **recall ≥ 80% (shipped)** | **0.0875** | **0.858** | **0.293** | 0.574 | **30** | **622** |
+| **recall ≥ 70% (shipped)** | **0.1298** | **0.726** | **0.403** | 0.779 | **58** | **382** |
+| recall ≥ 80% | 0.0875 | 0.858 | 0.293 | 0.574 | 30 | 622 |
 | recall ≥ 90% | 0.0677 | 0.920 | 0.225 | 0.351 | 17 | 865 |
 
-Missed cases drop from 111 to 30. **The cost is steep and must be stated plainly:
-622 of 1245 patients are flagged — roughly half the population — and only about 3
-in 10 flags are true positives.** Specificity falls from 0.944 to 0.574.
+Missed cases drop from 111 to 58 — nearly halved — while 382 of 1245 patients are
+flagged (31%) at 40% precision. Specificity falls from 0.944 to 0.779.
 
-`TARGET_RECALL` in notebook cell 47 controls this. Lowering it to 0.70 gives a
-more selective tool (382 flagged, precision 0.403) while still halving missed
-cases relative to the F1 optimum — a reasonable middle ground if the false-alarm
-volume proves impractical.
+`TARGET_RECALL = 0.70` in notebook cell 47 controls this. **0.80 was tried first
+and rejected**: it reached 0.858 recall but flagged 622 patients — roughly half the
+population — at 29% precision and 0.574 specificity, which is not a usable
+screening posture at 17% prevalence. 0.70 keeps most of the sensitivity gain at
+materially lower false-alarm cost.
 
 Threshold-independent metrics are unaffected: ROC-AUC 0.8221, PR-AUC 0.6424,
 Brier 0.0963.
@@ -281,12 +281,12 @@ Brier 0.0963.
 ### Risk bands realigned to the threshold
 
 The bands were written for the old 43%-prevalence model, with Low Risk spanning
-0–25%. Against a 0.0875 threshold that produced direct contradictions: a diabetic
+0–25%. Against a sub-25% threshold that produced direct contradictions: a diabetic
 hypertensive scoring 14.6% was flagged "KD Risk" while being told "Low Risk —
 reassess in 12 months".
 
 The Low/Moderate boundary is now pinned to the decision threshold
-(`_LOW_MAX = optimal_threshold` in `ckd_api.py`), so a flagged patient is always
+(`_LOW_MAX = optimal_threshold` in `ckd_api.py`, currently 0.1298), so a flagged patient is always
 at least Moderate Risk and receives "repeat laboratory tests in 3 months". The
 referral boundaries (0.50, 0.75) are unchanged.
 

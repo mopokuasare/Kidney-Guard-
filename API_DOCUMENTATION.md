@@ -17,14 +17,14 @@ measurements using a calibrated stacking ensemble trained on CDC NHANES 2021–2
 > `eGFR < 60 OR ACR ≥ 30`, dropping prevalence 43.2% → 17.0%, and the model was
 > retrained. That patient now scores **5.9%**.
 >
-> **Threshold changed: `0.4439` → `0.0875`.** Anything hard-coding the old value
-> must be updated. The threshold is recall-oriented (≥80% recall on the
+> **Threshold changed: `0.4439` → `0.1298`.** Anything hard-coding the old value
+> must be updated. The threshold is recall-oriented (≥70% recall on the
 > calibration set), not F1-optimal, because this is a screening tool feeding a
-> confirmatory test. It flags roughly half of all patients at ~29% precision —
-> deliberate, and documented in MODEL_VALIDATION.md.
+> confirmatory eGFR/ACR test. Recall 0.726, precision 0.403, specificity 0.779 —
+> 31% of patients flagged. See MODEL_VALIDATION.md for the full trade-off.
 >
-> **Risk bands are now pinned to the threshold**: Low Risk ends at `0.0875`
-> rather than `0.25`, so a flagged patient is never labelled "Low Risk".
+> **Risk bands are pinned to the threshold**: Low Risk ends at `0.1298` rather
+> than `0.25`, so a flagged patient is never labelled "Low Risk".
 >
 > Headline metrics are lower by design — ROC-AUC 0.9225 → 0.8221 — because the old
 > figure was measured against a target that was largely an age proxy, with a
