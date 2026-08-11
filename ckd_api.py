@@ -12,8 +12,8 @@ Inference chain (must match the training notebook exactly):
 """
 
 import os
-import pickle
 
+import joblib
 import numpy as np
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -29,8 +29,8 @@ ENABLE_SHAP = os.getenv("ENABLE_SHAP", "1").lower() not in ("0", "false", "no")
 
 
 def load_pkl(name):
-    with open(os.path.join(MODEL_DIR, name), "rb") as f:
-        return pickle.load(f)
+    # joblib.load reads both joblib-compressed artifacts and plain pickles.
+    return joblib.load(os.path.join(MODEL_DIR, name))
 
 
 print("Loading NHANES model artifacts...")

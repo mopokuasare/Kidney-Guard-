@@ -1,7 +1,6 @@
-# NHANES kidney-disease model API.
+# NHANES kidney-disease model API (KDIGO-corrected model, joblib-compressed).
 # The .pkl artifacts were saved with scikit-learn 1.8.0 + numpy 2.x, so those
 # are REQUIRED (older versions fail to unpickle with a _loss / numpy._core error).
-# imbalanced-learn is NOT needed at inference (the saved model doesn't reference it).
 fastapi==0.118.0
 uvicorn[standard]==0.34.0
 pydantic==2.11.7
@@ -11,8 +10,14 @@ scikit-learn==1.8.0
 numpy==2.5.2
 scipy==1.16.2
 xgboost==3.4.0
+joblib==1.5.3
+
+# The corrected calibrated model was trained through an imbalanced-learn
+# (SMOTE) pipeline, so imblearn MUST be installed to unpickle it. sklearn-compat
+# is imblearn's shim that lets 0.14.x run against scikit-learn 1.8.0.
+imbalanced-learn==0.14.2
+sklearn-compat==0.1.3
 
 # Required to unpickle shap_explainer.pkl and serve /explain.
-# Adds ~33 MB RSS (total ~310 MB, fits Render's 512 MB tier).
 # Set ENABLE_SHAP=0 to skip loading it if memory becomes tight.
 shap==0.52.0
