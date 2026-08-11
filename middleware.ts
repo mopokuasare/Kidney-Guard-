@@ -37,12 +37,26 @@ export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const isPublic = PUBLIC_PATHS.some((p) => pathname.startsWith(p));
 
+  /**
+   * getUser() may have rotated the access/refresh token, in which case the new
+   * cookies live on `response`. A fresh NextResponse.redirect() would NOT carry
+   * them, so the rotated session would be thrown away and the very next request
+   * would look signed-out again — the cause of being bounced back to /login
+   * while navigating. Copy the cookies onto every redirect we return.
+   */
+  const redirectPreservingSession = (url: URL) => {
+    const redirect = NextResponse.redirect(url);
+    response.cookies.getAll().forEach((cookie) => redirect.cookies.set(cookie));
+    return redirect;
+  };
+
   // Not signed in and trying to reach a protected page → send to login.
   if (!user && !isPublic) {
     const url = request.nextUrl.clone();
     url.pathname = '/login';
+    url.search = '';
     url.searchParams.set('redirect', pathname);
-    return NextResponse.redirect(url);
+    return redirectPreservingSession(url);
   }
 
   // Already signed in but on an auth page → send to the app.
@@ -50,7 +64,7 @@ export async function middleware(request: NextRequest) {
     const url = request.nextUrl.clone();
     url.pathname = '/';
     url.search = '';
-    return NextResponse.redirect(url);
+    return redirectPreservingSession(url);
   }
 
   return response;
