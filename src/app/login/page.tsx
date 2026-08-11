@@ -28,11 +28,37 @@ function LoginForm() {
     }
     setBusy(true);
     const { error } = await supabase.auth.signInWithPassword({ email, password });
-    setBusy(false);
+
     if (error) {
-      setError(error.message);
+      setBusy(false);
+      // Supabase returns this when the account exists but the confirmation link
+      // was never followed. The raw message doesn't say what to do about it.
+      setError(
+        /email not confirmed/i.test(error.message)
+          ? 'This account has not been confirmed yet. Open the confirmation link sent to your email, ' +
+            'or ask an administrator to confirm the account in Supabase.'
+          : error.message
+      );
       return;
     }
+
+    /**
+     * Navigating without checking that a session actually persisted turns a
+     * failed sign-in into a silent loop: the redirect lands on a protected
+     * page, the middleware sees no session cookie, and bounces straight back
+     * to this form with no explanation. Verify first, and say so if it failed.
+     */
+    const { data: check } = await supabase.auth.getSession();
+    setBusy(false);
+    if (!check.session) {
+      setError(
+        'Signed in, but the session could not be stored in this browser. ' +
+          'Check that cookies are enabled for this site and that you are not in a ' +
+          'private window with cookies blocked, then try again.'
+      );
+      return;
+    }
+
     router.push(redirect);
     router.refresh();
   };
