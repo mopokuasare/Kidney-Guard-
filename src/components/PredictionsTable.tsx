@@ -8,9 +8,9 @@ import { isSupabaseConfigured } from '@/lib/supabase/client';
 import { getRecentPredictions, type PredictionRow } from '@/lib/ckdService';
 
 const SAMPLE = [
-  { id: 's1', patient_name: 'Jane Smith', age: 62, inputs: { sc: 2.1, hemo: 10.2 }, risk_probability: 68, tier: 'High Risk', created_at: '' },
-  { id: 's2', patient_name: 'Robert Chen', age: 55, inputs: { sc: 1.0, hemo: 14.5 }, risk_probability: 12, tier: 'Low Risk', created_at: '' },
-  { id: 's3', patient_name: 'Maria Garcia', age: 71, inputs: { sc: 3.5, hemo: 9.1 }, risk_probability: 85, tier: 'Critical Risk', created_at: '' },
+  { id: 's1', patient_name: 'Jane Smith', age: 62, inputs: { serum_creatinine: 2.1, blood_urea_nitrogen: 32 }, risk_probability: 68, tier: 'High Risk', created_at: '' },
+  { id: 's2', patient_name: 'Robert Chen', age: 55, inputs: { serum_creatinine: 1.0, blood_urea_nitrogen: 14 }, risk_probability: 12, tier: 'Low Risk', created_at: '' },
+  { id: 's3', patient_name: 'Maria Garcia', age: 71, inputs: { serum_creatinine: 3.5, blood_urea_nitrogen: 48 }, risk_probability: 85, tier: 'Critical Risk', created_at: '' },
 ] as unknown as PredictionRow[];
 
 const tierToStatus = (tier?: string | null): string => {
@@ -81,7 +81,7 @@ export const PredictionsTable = () => {
                 <th className="px-6 py-4 whitespace-nowrap">Name</th>
                 <th className="px-6 py-4 whitespace-nowrap text-center">Age</th>
                 <th className="px-6 py-4 whitespace-nowrap text-center">Creatinine</th>
-                <th className="px-6 py-4 whitespace-nowrap text-center">Hemoglobin</th>
+                <th className="px-6 py-4 whitespace-nowrap text-center">BUN</th>
                 <th className="px-6 py-4 whitespace-nowrap text-center">Risk Score</th>
                 <th className="px-6 py-4 whitespace-nowrap text-center">Status</th>
                 <th className="px-6 py-4 whitespace-nowrap text-right">Time</th>
@@ -94,8 +94,8 @@ export const PredictionsTable = () => {
                     <div className="max-w-[140px] truncate">{r.patient_name || '—'}</div>
                   </td>
                   <td className="px-6 py-4 text-center text-slate-600">{r.age ?? '—'}</td>
-                  <td className="px-6 py-4 text-center text-slate-600">{r.inputs?.sc ?? '—'}</td>
-                  <td className="px-6 py-4 text-center text-slate-600">{r.inputs?.hemo ?? '—'}</td>
+                  <td className="px-6 py-4 text-center text-slate-600">{r.inputs?.serum_creatinine ?? '—'}</td>
+                  <td className="px-6 py-4 text-center text-slate-600">{r.inputs?.blood_urea_nitrogen ?? '—'}</td>
                   <td className="px-6 py-4 text-center font-bold text-slate-900">
                     {r.risk_probability != null ? `${r.risk_probability}%` : '—'}
                   </td>

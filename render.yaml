@@ -4,4 +4,12 @@ services:
     env: python
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn ckd_api:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
     autoDeploy: true
+    envVars:
+      # Set to 0 if the instance runs short on memory (drops /explain).
+      - key: ENABLE_SHAP
+        value: "1"
+      # Set to your Vercel origin to allow credentialed requests.
+      # - key: ALLOWED_ORIGINS
+      #   value: https://your-app.vercel.app

@@ -1,811 +1,409 @@
 """
-CKD PROBABILITY RISK PREDICTION — FastAPI Backend v2.2
-=======================================================
-Now includes PDF lab report upload endpoint.
+Kidney Disease Risk Prediction API
+NHANES 2021-2023 | KDIGO 2024 | Stacking Ensemble (RF + GB + XGBoost -> LR)
+FastAPI + uvicorn
 
-NEW IN v2.2:
-  POST /predict/upload — Upload a PDF lab report and get prediction
-                         without manual data entry
+Model artifacts were saved with scikit-learn 1.8.0 + numpy 2.x, so those
+versions are pinned in requirements.txt (older versions fail to unpickle).
 
-MODEL DETAILS:
-  Architecture : Calibrated Stacking Ensemble
-  Base learners: Logistic Regression, Random Forest,
-                 Gradient Boosting, k-NN
-  Meta-learner : Logistic Regression
-  Calibration  : Sigmoid (CalibratedClassifierCV, cv=5)
-  Features     : 12 selected (Chi-square + RF importance, threshold 0.10)
-  Dataset      : UCI CKD (400 patients, 70/30 split, SMOTE balanced)
-  Accuracy     : 99.17% | Recall: 100% | ROC-AUC: 1.0000 | Brier: 0.0084
-
-HOW TO RUN:
-  cd "path/to/folder/with/pkl/files"
-  pip install fastapi uvicorn joblib scikit-learn numpy pandas shap lime pdfplumber python-multipart
-  uvicorn ckd_api:app --reload --host 0.0.0.0 --port 8000
-
-INTERACTIVE DOCS:
-  http://localhost:8000/docs
-
-AUTHOR: Ernest (CKD Risk Prediction Project)
+Inference chain (must match the training notebook exactly):
+    raw features -> median/mode imputation -> StandardScaler -> calibrated
+    stacking ensemble -> P(KD risk) -> threshold -> risk band
 """
 
 import os
-import re
-import io
-import joblib
+import pickle
+
 import numpy as np
-import pandas as pd
-from fastapi import FastAPI, HTTPException, UploadFile, File
-from pydantic import BaseModel, Field
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field, field_validator
 
-def suggested_action(risk_prob):
-    if risk_prob < 0.3:
-        return "Low Risk: Maintain healthy lifestyle and regular checkups"
-    elif risk_prob < 0.7:
-        return "Medium Risk: Consult a doctor and monitor kidney function"
-    else:
-        return "High Risk: Please see a nephrologist immediately"
-
-# Fix unpickling lookup for Uvicorn / cloud servers.
-# Some artifacts were pickled from a notebook/script where these lived in
-# __main__, so we re-register them here before any joblib.load call.
-import sys
-sys.modules['__main__'].suggested_action = suggested_action
-
-# ── Load model artifacts ──────────────────────────────────────────────────────
+# ── Load model files ─────────────────────────────────────────────
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MODEL_DIR = os.path.join(BASE_DIR, "nhanes_model_files")
 
-# Required artifacts — the API cannot serve predictions without these.
-print("Loading required model artifacts...")
-try:
-    model    = joblib.load(os.path.join(BASE_DIR, "ckd_model.pkl"))
-    scaler   = joblib.load(os.path.join(BASE_DIR, "ckd_scaler.pkl"))
-    features = joblib.load(os.path.join(BASE_DIR, "ckd_features.pkl"))
-    print(f"[OK] Core artifacts loaded")
-    print(f"   Model features ({len(features)}): {features}")
-except Exception as e:
-    print(f"[ERROR] Error loading core artifacts: {e}")
-    raise
+# SHAP roughly +33 MB RSS on top of the ~240 MB model. Comfortable on a
+# 512 MB Render instance, but set ENABLE_SHAP=0 to drop it if memory gets tight.
+ENABLE_SHAP = os.getenv("ENABLE_SHAP", "1").lower() not in ("0", "false", "no")
 
-# Optional artifact — SHAP explainer. If it fails to load (e.g. shap not
-# installed or version mismatch), the API still serves predictions; only the
-# SHAP section of the response is degraded.
-print("Loading SHAP explainer...")
-try:
-    shap_explainer = joblib.load(os.path.join(BASE_DIR, "ckd_shap_explainer.pkl"))
-    SHAP_AVAILABLE = True
-    print("[OK] SHAP explainer ready")
-except Exception as e:
-    shap_explainer = None
-    SHAP_AVAILABLE = False
-    print(f"[WARN] SHAP not available: {e}")
 
-# ── Initialise LIME explainer at startup (optional) ──────────────────────────
-print("Initialising LIME explainer...")
-try:
-    X_train_smote = joblib.load(os.path.join(BASE_DIR, "ckd_train_data.pkl"))
-    from lime import lime_tabular
-    lime_explainer = lime_tabular.LimeTabularExplainer(
-        training_data         = X_train_smote,
-        feature_names         = features,
-        class_names           = ['CKD', 'Not CKD'],
-        mode                  = 'classification',
-        discretize_continuous = True,
-        random_state          = 42
-    )
-    LIME_AVAILABLE = True
-    print("[OK] LIME explainer ready")
-except Exception as e:
-    LIME_AVAILABLE = False
-    print(f"[WARN] LIME not available: {e}")
+def load_pkl(name):
+    with open(os.path.join(MODEL_DIR, name), "rb") as f:
+        return pickle.load(f)
 
-# ── Check pdfplumber availability ─────────────────────────────────────────────
-try:
-    import pdfplumber
-    PDF_AVAILABLE = True
-    print("[OK] PDF processing ready")
-except ImportError:
-    PDF_AVAILABLE = False
-    print("[WARN] pdfplumber not installed. Run: pip install pdfplumber")
 
-# ── FastAPI app ───────────────────────────────────────────────────────────────
+print("Loading NHANES model artifacts...")
+calibrated_model = load_pkl("calibrated_model.pkl")
+scaler = load_pkl("scaler.pkl")
+imputation_values = load_pkl("imputation_values.pkl")
+optimal_threshold = float(load_pkl("threshold.pkl"))
+features = load_pkl("features.pkl")
+print(f"[OK] Model loaded. Features ({len(features)}): {features}")
+print(f"[OK] Threshold: {optimal_threshold:.4f}")
+
+# Training medians (continuous) and modes (binary), used to fill omitted fields.
+IMPUTE_MEDIANS = imputation_values.get("medians", {})
+IMPUTE_MODES = imputation_values.get("modes", {})
+
+shap_explainer = None
+if ENABLE_SHAP:
+    try:
+        shap_explainer = load_pkl("shap_explainer.pkl")
+        print("[OK] SHAP explainer loaded (/explain enabled)")
+    except FileNotFoundError:
+        print("[WARN] shap_explainer.pkl not found - /explain disabled")
+    except Exception as exc:  # noqa: BLE001 - never block startup on SHAP
+        print(f"[WARN] SHAP explainer failed to load ({exc}) - /explain disabled")
+else:
+    print("[INFO] ENABLE_SHAP=0 - /explain disabled")
+
+
+# ── Risk stratification ──────────────────────────────────────────
+# Bands are the clinical stratification from the training notebook and are
+# intentionally independent of the F1-optimal decision threshold below.
+RISK_BANDS = [
+    (0.00, 0.25, "Low Risk", "Routine",
+     "No strong indicators of kidney disease detected. "
+     "Routine follow-up recommended. Reassess in 12 months."),
+    (0.25, 0.50, "Moderate Risk", "Monitor",
+     "Some clinical markers present. Borderline profile. "
+     "Repeat laboratory tests in 3 months. "
+     "Monitor blood pressure and diabetes control closely."),
+    (0.50, 0.75, "High Risk", "Refer",
+     "Clinical profile strongly suggestive of kidney disease. "
+     "Nephrology referral recommended. "
+     "Full renal function workup advised."),
+    (0.75, 1.01, "Critical Risk", "Urgent",
+     "Clinical profile highly consistent with kidney disease. "
+     "Urgent nephrology referral required. "
+     "Immediate further evaluation necessary."),
+]
+
+FEATURE_LABELS = {
+    "serum_creatinine": "Serum Creatinine",
+    "blood_urea_nitrogen": "Blood Urea Nitrogen",
+    "bp_systolic": "Systolic Blood Pressure",
+    "age": "Age",
+    "diabetes_diagnosed": "Diabetes Diagnosed",
+    "albumin_serum": "Serum Albumin",
+    "bmi": "Body Mass Index",
+    "ever_smoked": "Ever Smoked",
+}
+
+
+def get_risk_stratification(prob: float) -> dict:
+    for low, high, level, urgency, action in RISK_BANDS:
+        if low <= prob < high:
+            return {"level": level, "urgency": urgency, "action": action}
+    return {"level": "Critical Risk", "urgency": "Urgent",
+            "action": RISK_BANDS[-1][4]}
+
+
+# ── FastAPI setup ────────────────────────────────────────────────
 app = FastAPI(
-    title="CKD Probability Risk Prediction API",
-    description="""
-## CKD Risk Prediction API v2.2
-
-Two ways to get a prediction:
-
-### Option 1 — Manual entry
-`POST /predict` — Clinician types the 14 clinical values directly.
-
-### Option 2 — PDF upload
-`POST /predict/upload` — Upload a PDF lab report. The system
-automatically extracts the clinical values and generates the prediction.
-The doctor saves time — no manual typing required.
-
-Both options return the same complete output:
-- CKD probability risk score (0–100%)
-- Risk tier (Low / Moderate / High / Critical)
-- Suggested clinical action
-- eGFR (CKD-EPI 2021)
-- SHAP feature contributions
-- LIME feature contributions
-- Disclaimer
-
-### Model Performance
-| Metric | Score |
-|---|---|
-| Accuracy | 99.17% |
-| Recall | 100.00% |
-| Specificity | 100.00% |
-| ROC-AUC | 1.0000 |
-| Brier Score | 0.0084 |
-
-[WARN] **Disclaimer:** Decision support only. Does not replace clinical diagnosis.
-    """,
-    version="2.2.0",
+    title="Kidney Disease Risk Prediction API",
+    description=(
+        "ML decision support system trained on CDC NHANES 2021-2023. "
+        "KDIGO 2024 staging via CKD-EPI 2021 race-free eGFR equation. "
+        "For research and decision support only. "
+        "Not a substitute for clinical diagnosis."
+    ),
+    version="1.1.0",
 )
 
-# ── CORS ──────────────────────────────────────────────────────────────────────
+# Browsers reject `Access-Control-Allow-Origin: *` on credentialed requests, so
+# wildcard and credentials are mutually exclusive. Set ALLOWED_ORIGINS to a
+# comma-separated list (e.g. your Vercel URL) to enable cookie/auth requests.
+_origins_env = os.getenv("ALLOWED_ORIGINS", "").strip()
+if _origins_env:
+    allow_origins = [o.strip() for o in _origins_env.split(",") if o.strip()]
+    allow_credentials = True
+else:
+    allow_origins = ["*"]
+    allow_credentials = False
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=allow_origins,
+    allow_credentials=allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# ── Feature metadata ──────────────────────────────────────────────────────────
-FEATURE_LABELS = {
-    "hemo": "Haemoglobin (gms)",
-    "sc":   "Serum Creatinine (mgs/dL)",
-    "pcv":  "Packed Cell Volume (%)",
-    "htn":  "Hypertension",
-    "dm":   "Diabetes Mellitus",
-    "sg":   "Specific Gravity",
-    "al":   "Albumin Level",
-    "bu":   "Blood Urea (mgs/dL)",
-    "rbcc": "Red Blood Cell Count (millions/cumm)",
-    "sod":  "Sodium (mEq/L)",
-    "bgr":  "Blood Glucose Random (mgs/dL)",
-    "wbcc": "WBC Count (cells/cumm)",
-}
-
-NORMAL_RANGES = {
-    "hemo": "Male: 13.5–17.5 gms | Female: 12.0–15.5 gms",
-    "sc":   "0.7–1.2 mgs/dL",
-    "pcv":  "Male: 40–52% | Female: 36–48%",
-    "htn":  "0 = No (normal) | 1 = Yes",
-    "dm":   "0 = No (normal) | 1 = Yes",
-    "sg":   "1.005 / 1.010 / 1.015 / 1.020 / 1.025",
-    "al":   "0 = None (normal) | 1–5 = Increasing proteinuria",
-    "bu":   "7–20 mgs/dL",
-    "rbcc": "Male: 4.5–5.9 | Female: 4.1–5.1 millions/cumm",
-    "sod":  "136–145 mEq/L",
-    "bgr":  "Below 140 mgs/dL (random)",
-    "wbcc": "4,500–11,000 cells/cumm",
-}
-
-# ── PDF extraction patterns ───────────────────────────────────────────────────
-# Multiple patterns per feature to handle different lab report formats
-EXTRACTION_PATTERNS = {
-    'hemo': [
-        r'haemoglobin[:\s]+([0-9]+\.?[0-9]*)',
-        r'hemoglobin[:\s]+([0-9]+\.?[0-9]*)',
-        r'hgb[:\s]+([0-9]+\.?[0-9]*)',
-        r'\bhb\b[:\s]+([0-9]+\.?[0-9]*)',
-    ],
-    'sc': [
-        r'serum\s*creatinine[:\s]+([0-9]+\.?[0-9]*)',
-        r's\.?\s*creatinine[:\s]+([0-9]+\.?[0-9]*)',
-        r'creatinine[:\s]+([0-9]+\.?[0-9]*)',
-    ],
-    'bu': [
-        r'blood\s*urea[:\s]+([0-9]+\.?[0-9]*)',
-        r'\burea\b[:\s]+([0-9]+\.?[0-9]*)',
-        r'\bbun\b[:\s]+([0-9]+\.?[0-9]*)',
-    ],
-    'sod': [
-        r'sodium[:\s]+([0-9]+\.?[0-9]*)',
-        r'\bna\+?\b[:\s]+([0-9]+\.?[0-9]*)',
-    ],
-    'bgr': [
-        r'blood\s*glucose\s*random[:\s]+([0-9]+\.?[0-9]*)',
-        r'random\s*blood\s*(?:sugar|glucose)[:\s]+([0-9]+\.?[0-9]*)',
-        r'\brbs\b[:\s]+([0-9]+\.?[0-9]*)',
-        r'\bglucose\b[:\s]+([0-9]+\.?[0-9]*)',
-    ],
-    'wbcc': [
-        r'wbc\s*count[:\s]+([0-9]+\.?[0-9]*)',
-        r'white\s*blood\s*cell(?:\s*count)?[:\s]+([0-9]+\.?[0-9]*)',
-        r'leukocytes[:\s]+([0-9]+\.?[0-9]*)',
-        r'\bwbc\b[:\s]+([0-9]+\.?[0-9]*)',
-    ],
-    'sg': [
-        r'specific\s*gravity[:\s]+([0-9]+\.?[0-9]*)',
-        r'urine\s*s\.?g\.?[:\s]+([0-9]+\.?[0-9]*)',
-        r'\bsg\b[:\s]+([0-9]+\.?[0-9]*)',
-    ],
-    'al': [
-        r'albumin[:\s]+([0-9]+\.?[0-9]*)',
-        r'urine\s*albumin[:\s]+([0-9]+\.?[0-9]*)',
-        r'proteinuria[:\s]+([0-9]+\.?[0-9]*)',
-    ],
-    'pcv': [
-        r'packed\s*cell\s*volume[:\s]+([0-9]+\.?[0-9]*)',
-        r'haematocrit[:\s]+([0-9]+\.?[0-9]*)',
-        r'hematocrit[:\s]+([0-9]+\.?[0-9]*)',
-        r'\bpcv\b[:\s]+([0-9]+\.?[0-9]*)',
-        r'\bhct\b[:\s]+([0-9]+\.?[0-9]*)',
-    ],
-    'rbcc': [
-        r'rbc\s*count[:\s]+([0-9]+\.?[0-9]*)',
-        r'red\s*blood\s*cell(?:\s*count)?[:\s]+([0-9]+\.?[0-9]*)',
-        r'erythrocytes[:\s]+([0-9]+\.?[0-9]*)',
-        r'\brbc\b[:\s]+([0-9]+\.?[0-9]*)',
-    ],
-    'htn': [
-        r'hypertension[:\s]+(yes|no|positive|negative|present|absent)',
-        r'high\s*blood\s*pressure[:\s]+(yes|no)',
-        r'\bhtn\b[:\s]+(yes|no)',
-    ],
-    'dm': [
-        r'diabetes\s*mellitus[:\s]+(yes|no|positive|negative|present|absent)',
-        r'\bdiabetes\b[:\s]+(yes|no)',
-        r'\bdm\b[:\s]+(yes|no)',
-    ],
-}
-
-AGE_PATTERNS = [
-    r'age[:\s]+([0-9]+)',
-    r'age[:\s\(]+([0-9]+)\s*(?:years?|yrs?)?',
-    r'([0-9]+)\s*(?:years?|yrs?)\s*old',
-]
-
-SEX_PATTERNS = [
-    r'sex[:\s]+(male|female)',
-    r'gender[:\s]+(male|female)',
-    r'\b(male|female)\b',
-]
+print(f"[OK] CORS origins: {allow_origins} (credentials={allow_credentials})")
 
 
-# ── Input schema — manual entry ───────────────────────────────────────────────
-class PatientInput(BaseModel):
-    age:  float = Field(..., ge=1,   le=120,
-                        description="Age in years (for eGFR)")
-    sex:  str   = Field(...,
-                        description="'male' or 'female' (for eGFR)")
-    hemo: float = Field(..., ge=0,   le=20)
-    sc:   float = Field(..., ge=0,   le=100)
-    bu:   float = Field(..., ge=0,   le=500)
-    sod:  float = Field(..., ge=0,   le=200)
-    bgr:  float = Field(..., ge=0,   le=600)
-    wbcc: float = Field(..., ge=0,   le=50000)
-    sg:   float = Field(...)
-    al:   float = Field(..., ge=0,   le=5)
-    pcv:  float = Field(..., ge=0,   le=60)
-    rbcc: float = Field(..., ge=0,   le=10)
-    htn:  int   = Field(..., ge=0,   le=1)
-    dm:   int   = Field(..., ge=0,   le=1)
+# ── Request schema ───────────────────────────────────────────────
+class PatientFeatures(BaseModel):
+    """All fields optional: omitted values fall back to the training
+    median (continuous) or mode (binary), matching the notebook's imputation."""
 
-    class Config:
-        json_schema_extra = {
+    serum_creatinine: float | None = Field(None, gt=0, le=30,
+                                           description="Serum Creatinine (mg/dl)")
+    blood_urea_nitrogen: float | None = Field(None, gt=0, le=200,
+                                              description="Blood Urea Nitrogen (mg/dl)")
+    bp_systolic: float | None = Field(None, gt=60, le=260,
+                                      description="Systolic Blood Pressure (mm/Hg)")
+    age: float | None = Field(None, ge=0, le=120, description="Age (years)")
+    diabetes_diagnosed: int | None = Field(None, ge=0, le=1,
+                                           description="Diabetes Diagnosed - 1=Yes 0=No")
+    albumin_serum: float | None = Field(None, gt=0, le=10,
+                                        description="Serum Albumin (g/dl)")
+    bmi: float | None = Field(None, gt=10, le=100, description="Body Mass Index (kg/m2)")
+    ever_smoked: int | None = Field(None, ge=0, le=1,
+                                    description="Ever Smoked - 1=Yes 0=No")
+
+    @field_validator("diabetes_diagnosed", "ever_smoked")
+    @classmethod
+    def must_be_binary(cls, v):
+        if v is not None and v not in (0, 1):
+            raise ValueError("Must be 0 or 1")
+        return v
+
+    model_config = {
+        "json_schema_extra": {
             "example": {
-                "age": 45, "sex": "male",
-                "hemo": 10.5, "sc": 3.8,  "bu": 57.0,
-                "sod": 135.0, "bgr": 148.0, "wbcc": 8000.0,
-                "sg": 1.010,  "al": 1,    "pcv": 32.0,
-                "rbcc": 3.9,  "htn": 1,   "dm": 1
+                "serum_creatinine": 0.83, "blood_urea_nitrogen": 14.0,
+                "bp_systolic": 118.0, "age": 52.0, "diabetes_diagnosed": 0,
+                "albumin_serum": 4.1, "bmi": 27.7, "ever_smoked": 0,
             }
         }
-
-
-# ── Helper functions ──────────────────────────────────────────────────────────
-def calculate_egfr(creatinine: float, age: float, sex: str) -> dict:
-    """CKD-EPI 2021 equation."""
-    sex        = sex.lower().strip()
-    kappa      = 0.7    if sex == "female" else 0.9
-    alpha      = -0.241 if sex == "female" else -0.302
-    sex_factor = 1.012  if sex == "female" else 1.0
-    ratio = creatinine / kappa
-    egfr  = (142 * (ratio ** alpha)  * (0.9938 ** age) * sex_factor
-             if ratio < 1 else
-             142 * (ratio ** -1.200) * (0.9938 ** age) * sex_factor)
-    egfr  = round(egfr, 1)
-    if   egfr >= 90: stage = "G1 — Normal kidney function"
-    elif egfr >= 60: stage = "G2 — Mildly decreased"
-    elif egfr >= 45: stage = "G3a — Mildly to moderately decreased"
-    elif egfr >= 30: stage = "G3b — Moderately to severely decreased"
-    elif egfr >= 15: stage = "G4 — Severely decreased"
-    else:            stage = "G5 — Kidney failure"
-    return {"value": egfr, "unit": "mL/min/1.73m²",
-            "stage": stage, "equation": "CKD-EPI 2021"}
-
-
-def get_risk_info(prob: float) -> dict:
-    """Risk stratification — matches notebook Cell 39 exactly."""
-    if prob < 0.30:
-        return {"tier": "Low Risk",      "urgency": "LOW",
-                "color": "#27AE60",
-                "action": "Routine follow-up. Reassess in 12 months."}
-    elif prob < 0.60:
-        return {"tier": "Moderate Risk", "urgency": "MODERATE",
-                "color": "#F39C12",
-                "action": "Monitor closely. Repeat tests in 3 months."}
-    elif prob < 0.80:
-        return {"tier": "High Risk",     "urgency": "HIGH",
-                "color": "#E67E22",
-                "action": "Further renal evaluation recommended."}
-    else:
-        return {"tier": "Critical Risk", "urgency": "CRITICAL",
-                "color": "#E74C3C",
-                "action": "Urgent nephrology referral strongly advised."}
-
-
-def get_shap_contributions(X_scaled: np.ndarray) -> list:
-    """SHAP — exact Shapley values using TreeExplainer."""
-    if not SHAP_AVAILABLE:
-        return [{"error": "SHAP explainer not available on this server."}]
-    try:
-        shap_vals = shap_explainer.shap_values(X_scaled)
-        if isinstance(shap_vals, list):
-            vals = shap_vals[0][0]
-        elif shap_vals.ndim == 3:
-            vals = shap_vals[0, :, 0]
-        else:
-            vals = shap_vals[0]
-        contributions = []
-        for feat, val in zip(features, vals):
-            contributions.append({
-                "feature":          feat,
-                "feature_name":     FEATURE_LABELS.get(feat, feat),
-                "shap_value":       round(float(val), 4),
-                "contribution_pct": round(abs(float(val)) * 100, 2),
-                "direction":        "Increases CKD risk"
-                                    if val > 0 else "Decreases CKD risk"
-            })
-        contributions.sort(key=lambda x: x["contribution_pct"], reverse=True)
-        return contributions
-    except Exception as e:
-        return [{"error": f"SHAP failed: {str(e)}"}]
-
-
-def get_lime_contributions(X_scaled: np.ndarray) -> list:
-    """LIME — local linear approximation."""
-    if not LIME_AVAILABLE:
-        return [{"error": "LIME not available. pip install lime"}]
-    try:
-        lime_exp = lime_explainer.explain_instance(
-            data_row     = X_scaled[0],
-            predict_fn   = model.predict_proba,
-            num_features = len(features),
-            num_samples  = 1000,
-            labels       = (0,)
-        )
-        contributions = []
-        for condition, weight in lime_exp.as_list(label=0):
-            match   = re.search(r'([a-zA-Z_]+)', condition)
-            feat_code = match.group(1) if match else condition
-            contributions.append({
-                "feature":          feat_code,
-                "feature_name":     FEATURE_LABELS.get(feat_code, feat_code),
-                "condition":        condition,
-                "lime_weight":      round(float(weight), 4),
-                "contribution_pct": round(abs(float(weight)) * 100, 2),
-                "direction":        "Increases CKD risk"
-                                    if weight > 0 else "Decreases CKD risk"
-            })
-        contributions.sort(key=lambda x: x["contribution_pct"], reverse=True)
-        return contributions
-    except Exception as e:
-        return [{"error": f"LIME failed: {str(e)}"}]
-
-
-def build_comparison(shap_contribs: list, lime_contribs: list) -> list:
-    """SHAP vs LIME rank comparison."""
-    shap_ranks = {item["feature"]: idx + 1
-                  for idx, item in enumerate(shap_contribs)
-                  if "error" not in item}
-    lime_ranks = {item["feature"]: idx + 1
-                  for idx, item in enumerate(lime_contribs)
-                  if "error" not in item}
-    comparison = []
-    for feat in features:
-        s, l = shap_ranks.get(feat), lime_ranks.get(feat)
-        if s and l:
-            comparison.append({
-                "feature":      feat,
-                "feature_name": FEATURE_LABELS.get(feat, feat),
-                "shap_rank":    s,
-                "lime_rank":    l,
-                "agreement":    "[OK] Agree" if abs(s - l) <= 2 else "[WARN] Differ"
-            })
-    return comparison
-
-
-def run_prediction(patient_dict: dict) -> dict:
-    """
-    Core prediction logic shared by both /predict and /predict/upload.
-    Accepts a dict with all 14 fields and returns complete output.
-    """
-    # Build feature dataframe in correct order
-    input_dict = {k: patient_dict[k] for k in features}
-    df_input   = pd.DataFrame([input_dict])[features]
-    X_scaled   = scaler.transform(df_input)
-
-    # Predict
-    prob_all    = model.predict_proba(X_scaled)
-    ckd_prob    = float(np.clip(prob_all[0][0], 0.01, 0.99))
-    ckd_risk_pct = round(ckd_prob * 100, 1)
-
-    risk_info      = get_risk_info(ckd_prob)
-    egfr_info      = calculate_egfr(patient_dict['sc'],
-                                    patient_dict['age'],
-                                    patient_dict['sex'])
-    shap_contribs  = get_shap_contributions(X_scaled)
-    lime_contribs  = get_lime_contributions(X_scaled)
-    comparison     = build_comparison(shap_contribs, lime_contribs)
-
-    return {
-        "prediction": {
-            "ckd_risk_probability": ckd_risk_pct,
-            "ckd_risk_label":       f"{ckd_risk_pct}% CKD Risk",
-            "predicted_class":      "CKD" if ckd_prob >= 0.5
-                                    else "Not CKD",
-        },
-        "risk_stratification": {
-            "tier":             risk_info["tier"],
-            "urgency":          risk_info["urgency"],
-            "color":            risk_info["color"],
-            "suggested_action": risk_info["action"],
-        },
-        "egfr": egfr_info,
-        "shap_explanations": {
-            "method":       "SHAP — SHapley Additive exPlanations",
-            "description":  "Exact, tree-based. Uses TreeExplainer on RF.",
-            "top_5":        shap_contribs[:5],
-            "all_features": shap_contribs,
-        },
-        "lime_explanations": {
-            "method":       "LIME — Local Interpretable Model-Agnostic Explanations",
-            "description":  "Local linear approximation. Model-agnostic.",
-            "top_5":        lime_contribs[:5],
-            "all_features": lime_contribs,
-        },
-        "explainability_comparison": {
-            "feature_agreement": comparison,
-            "note": "Agreement = rank within 2 positions between SHAP and LIME."
-        },
-        "disclaimer": (
-            "This system is intended for risk assessment and decision "
-            "support only and does not replace clinical diagnosis. "
-            "All outputs must be interpreted by a qualified clinician."
-        ),
-        "model_info": {
-            "type":        "Calibrated Stacking Ensemble",
-            "calibration": "Sigmoid",
-            "accuracy":    "99.17%",
-            "recall":      "100.00%",
-            "specificity": "100.00%",
-            "f1_score":    "99.34%",
-            "roc_auc":     "1.0000",
-            "brier_score": "0.0084"
-        }
     }
 
 
-def extract_from_pdf_text(text: str) -> dict:
-    """
-    Extract all 14 clinical values from raw PDF text.
-    Handles multiple lab report formats using regex patterns.
-    Returns extracted values and a list of any missing fields.
-    """
-    text_lower = text.lower()
-    extracted  = {}
-
-    # Extract 12 model features
-    for feat, patterns_list in EXTRACTION_PATTERNS.items():
-        for pattern in patterns_list:
-            match = re.search(pattern, text_lower)
-            if match:
-                val = match.group(1).strip()
-                if feat in ['htn', 'dm']:
-                    extracted[feat] = 1 if val in [
-                        'yes','positive','present'] else 0
-                else:
-                    try:
-                        extracted[feat] = float(val)
-                    except ValueError:
-                        continue
-                break  # stop at first successful match
-
-    # Extract age
-    for pattern in AGE_PATTERNS:
-        match = re.search(pattern, text_lower)
-        if match:
-            try:
-                extracted['age'] = float(match.group(1))
-                break
-            except ValueError:
-                continue
-
-    # Extract sex
-    for pattern in SEX_PATTERNS:
-        match = re.search(pattern, text_lower)
-        if match:
-            val = match.group(1).lower()
-            extracted['sex'] = 'male' if val in ['male', 'm'] else 'female'
-            break
-
-    # Identify missing fields
-    all_fields  = features + ['age', 'sex']
-    missing     = [f for f in all_fields if f not in extracted]
-    extraction_confidence = round(
-        (len(all_fields) - len(missing)) / len(all_fields) * 100, 1)
-
-    return {
-        "extracted_values":       extracted,
-        "missing_fields":         missing,
-        "extraction_confidence":  extraction_confidence,
-        "total_fields_expected":  len(all_fields),
-        "total_fields_extracted": len(all_fields) - len(missing)
-    }
+# ── Response schema ──────────────────────────────────────────────
+class RiskAssessment(BaseModel):
+    patient_features: dict
+    imputed_features: list
+    kd_risk_score: float
+    kd_risk_percentage: str
+    predicted_class: str
+    predicted_class_int: int
+    probability_no_kd_risk: float
+    probability_kd_risk: float
+    risk_level: str
+    urgency: str
+    action: str
+    threshold_used: float
+    model: str
+    dataset: str
+    standard: str
+    disclaimer: str
 
 
-# ── Endpoints ─────────────────────────────────────────────────────────────────
+class FeatureContribution(BaseModel):
+    feature: str
+    label: str
+    value: float
+    shap_value: float
+    abs_contribution_pct: float
+    direction: str
 
-@app.get("/", tags=["Health"])
+
+class Explanation(BaseModel):
+    kd_risk_score: float
+    predicted_class: str
+    base_value: float
+    contributions: list[FeatureContribution]
+    top_drivers: list[str]
+    method: str
+    disclaimer: str
+
+
+class HealthResponse(BaseModel):
+    status: str
+    model: str
+    features: list
+    threshold: float
+    version: str
+    shap_enabled: bool
+
+
+# ── Core inference ───────────────────────────────────────────────
+def build_feature_vector(patient: "PatientFeatures"):
+    """Return (X, resolved_values, imputed_field_names) in model feature order."""
+    row, resolved, imputed = [], {}, []
+    for f in features:
+        v = getattr(patient, f)
+        if v is None:
+            if f in IMPUTE_MEDIANS:
+                v = IMPUTE_MEDIANS[f]
+            elif f in IMPUTE_MODES:
+                v = IMPUTE_MODES[f]
+            else:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"'{f}' is required and has no imputation value.",
+                )
+            imputed.append(f)
+        resolved[f] = float(v)
+        row.append(float(v))
+    X = np.array(row, dtype=np.float64).reshape(1, -1)
+    return X, resolved, imputed
+
+
+def run_prediction(patient: "PatientFeatures"):
+    X, resolved, imputed = build_feature_vector(patient)
+    X_scaled = scaler.transform(X)
+
+    probs = calibrated_model.predict_proba(X_scaled)[0]
+    # Clip both tails together so the two probabilities still sum to 1.
+    prob_kd = float(np.clip(probs[1], 0.001, 0.999))
+    prob_no_kd = 1.0 - prob_kd
+
+    pred_int = int(prob_kd >= optimal_threshold)
+    pred_label = "KD Risk" if pred_int == 1 else "No KD Risk"
+    strat = get_risk_stratification(prob_kd)
+
+    return X_scaled, resolved, imputed, prob_kd, prob_no_kd, pred_int, pred_label, strat
+
+
+# ── Routes ───────────────────────────────────────────────────────
+@app.get("/")
 def root():
-    """Health check."""
     return {
-        "status":  "online",
-        "message": "CKD Risk Prediction API v2.2 is running",
-        "input_options": {
-            "manual_entry": "POST /predict — type 14 values",
-            "pdf_upload":   "POST /predict/upload — upload PDF lab report"
-        },
-        "explainability": {
-            "shap": "[OK] Available" if SHAP_AVAILABLE else "[ERROR] unavailable",
-            "lime": "[OK] Available" if LIME_AVAILABLE else "[ERROR] pip install lime"
-        },
-        "model": {
-            "type":        "Calibrated Stacking Ensemble",
-            "accuracy":    "99.17%",
-            "recall":      "100.00%",
-            "roc_auc":     "1.0000"
-        }
+        "message": "Kidney Disease Risk Prediction API",
+        "docs": "/docs",
+        "health": "/health",
+        "predict": "/predict",
+        "explain": "/explain" if shap_explainer is not None else None,
     }
 
 
-@app.get("/features", tags=["Info"])
-def get_features():
-    """12 model features with descriptions and normal ranges."""
-    return {
-        "selected_features": features,
-        "total":             len(features),
-        "details": {
-            f: {
-                "full_name":    FEATURE_LABELS.get(f, f),
-                "normal_range": NORMAL_RANGES.get(f, "")
-            } for f in features
-        }
-    }
+@app.get("/health", response_model=HealthResponse)
+def health():
+    return HealthResponse(
+        status="healthy",
+        model="Stacking Ensemble (RF + GB + XGBoost -> LR)",
+        features=features,
+        threshold=round(optimal_threshold, 4),
+        version="1.1.0",
+        shap_enabled=shap_explainer is not None,
+    )
 
 
-@app.post("/predict", tags=["Prediction — Manual Entry"])
-def predict(patient: PatientInput):
-    """
-    Manual entry prediction.
-    Clinician types all 14 clinical values directly.
-    """
+@app.post("/predict", response_model=RiskAssessment)
+def predict(patient: PatientFeatures):
     try:
-        patient_dict = {
-            "age": patient.age, "sex": patient.sex,
-            "hemo": patient.hemo, "sc":   patient.sc,
-            "pcv":  patient.pcv,  "htn":  patient.htn,
-            "dm":   patient.dm,   "sg":   patient.sg,
-            "al":   patient.al,   "bu":   patient.bu,
-            "rbcc": patient.rbcc, "sod":  patient.sod,
-            "bgr":  patient.bgr,  "wbcc": patient.wbcc,
-        }
-        return run_prediction(patient_dict)
+        (_, resolved, imputed, prob_kd, prob_no_kd,
+         pred_int, pred_label, strat) = run_prediction(patient)
+
+        return RiskAssessment(
+            patient_features=resolved,
+            imputed_features=imputed,
+            kd_risk_score=round(prob_kd, 4),
+            kd_risk_percentage=f"{prob_kd * 100:.1f}%",
+            predicted_class=pred_label,
+            predicted_class_int=pred_int,
+            probability_no_kd_risk=round(prob_no_kd, 4),
+            probability_kd_risk=round(prob_kd, 4),
+            risk_level=strat["level"],
+            urgency=strat["urgency"],
+            action=strat["action"],
+            threshold_used=round(optimal_threshold, 4),
+            model="Stacking Ensemble - RF + GB + XGBoost -> LR",
+            dataset="CDC NHANES 2021-2023 | 6,326 patients",
+            standard="KDIGO 2024 | CKD-EPI 2021 race-free eGFR",
+            disclaimer=(
+                "For research and decision support purposes only. "
+                "Not a substitute for clinical diagnosis."
+            ),
+        )
+
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500,
-                            detail=f"Prediction failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/predict/upload", tags=["Prediction — PDF Upload"])
-async def predict_from_pdf(file: UploadFile = File(...)):
+@app.post("/explain", response_model=Explanation)
+def explain(patient: PatientFeatures):
+    """Per-patient SHAP attribution for the KD-risk class.
+
+    Attributions come from the Random Forest base learner (the notebook's
+    TreeExplainer), so they explain the ensemble's dominant signal rather than
+    the calibrated probability exactly. Use for direction and ranking.
     """
-    PDF lab report upload prediction.
-
-    The doctor uploads a PDF lab result. The system:
-    1. Extracts text from the PDF
-    2. Parses all clinical values using pattern matching
-    3. Runs the prediction
-    4. Returns the full result
-
-    [WARN] IMPORTANT: The frontend should always show the extracted values
-    to the doctor for verification before displaying the final prediction.
-    Extraction confidence is included in the response so the frontend
-    can decide whether to show a review step.
-
-    Accepted file types: PDF only (.pdf)
-    """
-    if not PDF_AVAILABLE:
+    if shap_explainer is None:
         raise HTTPException(
             status_code=503,
-            detail="PDF processing not available. "
-                   "Install with: pip install pdfplumber"
+            detail="SHAP explainer is not loaded on this instance.",
+        )
+    try:
+        (X_scaled, resolved, _, prob_kd, _,
+         _, pred_label, _) = run_prediction(patient)
+
+        raw = shap_explainer.shap_values(X_scaled)
+        # TreeExplainer returns list-per-class, a 3-D array, or a 2-D array
+        # depending on version. Normalise to the positive (KD risk) class.
+        if isinstance(raw, list):
+            vals = np.asarray(raw[1])[0]
+            base = shap_explainer.expected_value
+            base = float(base[1] if np.ndim(base) > 0 else base)
+        else:
+            arr = np.asarray(raw)
+            if arr.ndim == 3:
+                vals = arr[0, :, 1]
+                base = shap_explainer.expected_value
+                base = float(base[1] if np.ndim(base) > 0 else base)
+            else:
+                vals = arr[0]
+                base = shap_explainer.expected_value
+                base = float(np.ravel(base)[0])
+
+        vals = np.asarray(vals, dtype=float).ravel()
+        total = float(np.abs(vals).sum()) or 1.0
+
+        contributions = [
+            FeatureContribution(
+                feature=f,
+                label=FEATURE_LABELS.get(f, f),
+                value=resolved[f],
+                shap_value=round(float(v), 6),
+                abs_contribution_pct=round(abs(float(v)) / total * 100, 2),
+                direction="increases risk" if v > 0 else "reduces risk",
+            )
+            for f, v in zip(features, vals)
+        ]
+        contributions.sort(key=lambda c: -c.abs_contribution_pct)
+
+        return Explanation(
+            kd_risk_score=round(prob_kd, 4),
+            predicted_class=pred_label,
+            base_value=round(base, 6),
+            contributions=contributions,
+            top_drivers=[c.label for c in contributions[:3]],
+            method="SHAP TreeExplainer (Random Forest base learner)",
+            disclaimer=(
+                "Attributions describe the model's reasoning, not clinical "
+                "causation. For research and decision support only."
+            ),
         )
 
-    # Validate file type
-    if not file.filename.lower().endswith('.pdf'):
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/predict/batch")
+def predict_batch(patients: list[PatientFeatures]):
+    if len(patients) > 100:
         raise HTTPException(
             status_code=400,
-            detail="Only PDF files are accepted. "
-                   "Please upload a .pdf lab report."
+            detail="Maximum 100 patients per batch request",
         )
-
-    try:
-        # Read PDF content
-        pdf_bytes = await file.read()
-
-        # Extract text from all pages
-        full_text = ""
-        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
-            for page in pdf.pages:
-                page_text = page.extract_text()
-                if page_text:
-                    full_text += page_text + "\n"
-
-        if not full_text.strip():
-            raise HTTPException(
-                status_code=422,
-                detail="Could not extract text from this PDF. "
-                       "The file may be scanned or image-based. "
-                       "Please use the manual entry option instead."
-            )
-
-        # Extract clinical values
-        extraction_result = extract_from_pdf_text(full_text)
-        extracted         = extraction_result["extracted_values"]
-        missing           = extraction_result["missing_fields"]
-        confidence        = extraction_result["extraction_confidence"]
-
-        # Check if critical fields are missing
-        critical_missing = [f for f in missing if f in features]
-        if critical_missing:
-            return {
-                "extraction_status":  "incomplete",
-                "extraction_confidence": confidence,
-                "extracted_values":   extracted,
-                "missing_fields":     missing,
-                "critical_missing":   critical_missing,
-                "message": (
-                    f"Could not extract {len(critical_missing)} required "
-                    f"field(s): {critical_missing}. "
-                    f"Please enter these values manually using POST /predict, "
-                    f"or check that the lab report contains these parameters."
-                ),
-                "extracted_text_preview": full_text[:500]
-            }
-
-        # Run prediction with extracted values
-        result = run_prediction(extracted)
-
-        # Add extraction metadata to response
-        result["extraction_info"] = {
-            "status":                "success",
-            "filename":              file.filename,
-            "extraction_confidence": confidence,
-            "fields_extracted":      extraction_result["total_fields_extracted"],
-            "fields_expected":       extraction_result["total_fields_expected"],
-            "extracted_values": {
-                FEATURE_LABELS.get(k, k): v
-                for k, v in extracted.items()
-                if k in features
-            },
-            "warning": (
-                "Please verify the extracted values above match the "
-                "original lab report before trusting this prediction. "
-                "The system may occasionally misread values from "
-                "non-standard report formats."
-            ) if confidence < 100 else None
-        }
-
-        return result
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"PDF processing failed: {str(e)}"
-        )
-
-
-@app.post("/extract", tags=["PDF — Extract Only"])
-async def extract_only(file: UploadFile = File(...)):
-    """
-    Extract clinical values from a PDF without running prediction.
-
-    Use this endpoint if you want to show the doctor the extracted
-    values for review before sending them to POST /predict manually.
-    This gives the doctor full control to correct any extraction errors.
-
-    Returns: extracted values, missing fields, confidence score.
-    """
-    if not PDF_AVAILABLE:
-        raise HTTPException(
-            status_code=503,
-            detail="PDF processing not available. pip install pdfplumber"
-        )
-
-    if not file.filename.lower().endswith('.pdf'):
-        raise HTTPException(status_code=400,
-                            detail="Only PDF files are accepted.")
-
-    try:
-        pdf_bytes = await file.read()
-        full_text = ""
-        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
-            for page in pdf.pages:
-                page_text = page.extract_text()
-                if page_text:
-                    full_text += page_text + "\n"
-
-        if not full_text.strip():
-            raise HTTPException(
-                status_code=422,
-                detail="Could not extract text from this PDF."
-            )
-
-        extraction_result = extract_from_pdf_text(full_text)
-        extracted         = extraction_result["extracted_values"]
-
-        return {
-            "extraction_status":     "success",
-            "filename":              file.filename,
-            "extraction_confidence": extraction_result["extraction_confidence"],
-            "fields_extracted":      extraction_result["total_fields_extracted"],
-            "fields_expected":       extraction_result["total_fields_expected"],
-            "extracted_values":      extracted,
-            "missing_fields":        extraction_result["missing_fields"],
-            "display_values": {
-                FEATURE_LABELS.get(k, k): v
-                for k, v in extracted.items()
-                if k in features
-            },
-            "instructions": (
-                "Review the extracted values above. If all values are "
-                "correct, send them to POST /predict to get the prediction. "
-                "If any values are wrong, correct them before submitting."
-            )
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Extraction failed: {str(e)}"
-        )
-
-
-@app.post("/predict/batch", tags=["Prediction — Manual Entry"])
-def predict_batch(patients: list[PatientInput]):
-    """Batch manual prediction — maximum 50 patients."""
-    if len(patients) > 50:
-        raise HTTPException(status_code=400,
-                            detail="Maximum 50 patients per batch.")
-    results = []
-    for i, patient in enumerate(patients):
+    # One bad row shouldn't fail the whole batch - report it per index instead.
+    out = []
+    for i, p in enumerate(patients):
         try:
-            result = predict(patient)
-            result["patient_index"] = i + 1
-            results.append(result)
-        except Exception as e:
-            results.append({"patient_index": i + 1, "error": str(e)})
-    return {"total_patients": len(patients), "results": results}
+            out.append(predict(p))
+        except HTTPException as e:
+            out.append({"index": i, "error": e.detail, "status": e.status_code})
+    return out
+
+
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.getenv("PORT", "8000"))
+    uvicorn.run("ckd_api:app", host="0.0.0.0", port=port)

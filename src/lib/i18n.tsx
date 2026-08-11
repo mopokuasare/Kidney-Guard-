@@ -61,6 +61,49 @@ const en: Dict = {
   'predict.comorbidities': 'Comorbidities',
   'predict.recent': 'Recent Predictions',
 
+  'result.title': 'Clinical Assessment',
+  'result.riskScore': 'Kidney Disease Risk Score',
+  'result.action': 'Recommended Action',
+  'result.probability': 'Probability Breakdown',
+  'result.threshold': 'Screening threshold',
+  'result.screening': 'Screening result',
+  'result.screeningHint':
+    'Secondary binary flag set at the F1-optimal threshold. Clinical guidance follows the risk level above.',
+  'result.estimated': 'Some values were estimated',
+  'result.estimatedHint':
+    'Not provided, so filled with NHANES population averages. Supply them for a more accurate result:',
+  'result.kdRisk': 'KD Risk',
+  'result.noKdRisk': 'No KD Risk',
+
+  'risk.Low Risk': 'Low Risk',
+  'risk.Moderate Risk': 'Moderate Risk',
+  'risk.High Risk': 'High Risk',
+  'risk.Critical Risk': 'Critical Risk',
+
+  'urgency.Routine': 'Routine follow-up',
+  'urgency.Monitor': 'Monitor closely',
+  'urgency.Refer': 'Refer to nephrology',
+  'urgency.Urgent': 'Urgent referral',
+
+  'action.Low Risk':
+    'No strong indicators of kidney disease detected. Routine follow-up recommended. Reassess in 12 months.',
+  'action.Moderate Risk':
+    'Some clinical markers present. Borderline profile. Repeat laboratory tests in 3 months. Monitor blood pressure and diabetes control closely.',
+  'action.High Risk':
+    'Clinical profile strongly suggestive of kidney disease. Nephrology referral recommended. Full renal function workup advised.',
+  'action.Critical Risk':
+    'Clinical profile highly consistent with kidney disease. Urgent nephrology referral required. Immediate further evaluation necessary.',
+
+  'drivers.title': 'What Drove This Result',
+  'drivers.subtitle': 'Feature contributions',
+  'drivers.loading': 'Analysing contributions…',
+  'drivers.unavailable': 'Explanations are unavailable on this server.',
+  'drivers.increases': 'Increases risk',
+  'drivers.reduces': 'Reduces risk',
+  'drivers.topDrivers': 'Top drivers',
+  'drivers.note':
+    'Shows which measurements pushed this prediction up or down. Reflects model reasoning, not clinical causation.',
+
   'field.patientName': 'Patient Name',
   'field.age': 'Age',
   'field.gender': 'Gender',
@@ -121,6 +164,49 @@ const fr: Dict = {
   'predict.comorbidities': 'Comorbidités',
   'predict.recent': 'Prédictions récentes',
 
+  'result.title': 'Évaluation clinique',
+  'result.riskScore': 'Score de risque de maladie rénale',
+  'result.action': 'Conduite recommandée',
+  'result.probability': 'Répartition des probabilités',
+  'result.threshold': 'Seuil de dépistage',
+  'result.screening': 'Résultat du dépistage',
+  'result.screeningHint':
+    'Indicateur binaire secondaire fixé au seuil optimal F1. La conduite clinique suit le niveau de risque ci-dessus.',
+  'result.estimated': 'Certaines valeurs ont été estimées',
+  'result.estimatedHint':
+    'Non renseignées, donc remplacées par les moyennes de population NHANES. Renseignez-les pour un résultat plus précis :',
+  'result.kdRisk': 'Risque rénal',
+  'result.noKdRisk': 'Pas de risque rénal',
+
+  'risk.Low Risk': 'Risque faible',
+  'risk.Moderate Risk': 'Risque modéré',
+  'risk.High Risk': 'Risque élevé',
+  'risk.Critical Risk': 'Risque critique',
+
+  'urgency.Routine': 'Suivi de routine',
+  'urgency.Monitor': 'Surveillance rapprochée',
+  'urgency.Refer': 'Orienter vers la néphrologie',
+  'urgency.Urgent': 'Orientation urgente',
+
+  'action.Low Risk':
+    'Aucun indicateur marqué de maladie rénale détecté. Suivi de routine recommandé. Réévaluation dans 12 mois.',
+  'action.Moderate Risk':
+    'Certains marqueurs cliniques sont présents. Profil limite. Répéter les analyses de laboratoire dans 3 mois. Surveiller étroitement la tension artérielle et le contrôle du diabète.',
+  'action.High Risk':
+    'Profil clinique fortement évocateur d’une maladie rénale. Orientation vers un néphrologue recommandée. Bilan rénal complet conseillé.',
+  'action.Critical Risk':
+    'Profil clinique hautement compatible avec une maladie rénale. Orientation urgente vers un néphrologue requise. Évaluation complémentaire immédiate nécessaire.',
+
+  'drivers.title': 'Facteurs déterminants du résultat',
+  'drivers.subtitle': 'Contributions des variables',
+  'drivers.loading': 'Analyse des contributions…',
+  'drivers.unavailable': 'Les explications ne sont pas disponibles sur ce serveur.',
+  'drivers.increases': 'Augmente le risque',
+  'drivers.reduces': 'Réduit le risque',
+  'drivers.topDrivers': 'Facteurs principaux',
+  'drivers.note':
+    'Indique quelles mesures ont fait monter ou baisser cette prédiction. Reflète le raisonnement du modèle, non une causalité clinique.',
+
   'field.patientName': 'Nom du patient',
   'field.age': 'Âge',
   'field.gender': 'Sexe',
@@ -180,6 +266,49 @@ const es: Dict = {
   'predict.labs': 'Biomarcadores de laboratorio',
   'predict.comorbidities': 'Comorbilidades',
   'predict.recent': 'Predicciones recientes',
+
+  'result.title': 'Evaluación clínica',
+  'result.riskScore': 'Puntuación de riesgo de enfermedad renal',
+  'result.action': 'Conducta recomendada',
+  'result.probability': 'Desglose de probabilidad',
+  'result.threshold': 'Umbral de cribado',
+  'result.screening': 'Resultado del cribado',
+  'result.screeningHint':
+    'Indicador binario secundario fijado en el umbral óptimo de F1. La orientación clínica sigue el nivel de riesgo anterior.',
+  'result.estimated': 'Algunos valores fueron estimados',
+  'result.estimatedHint':
+    'No se proporcionaron, por lo que se completaron con promedios poblacionales de NHANES. Indíquelos para obtener un resultado más preciso:',
+  'result.kdRisk': 'Riesgo renal',
+  'result.noKdRisk': 'Sin riesgo renal',
+
+  'risk.Low Risk': 'Riesgo bajo',
+  'risk.Moderate Risk': 'Riesgo moderado',
+  'risk.High Risk': 'Riesgo alto',
+  'risk.Critical Risk': 'Riesgo crítico',
+
+  'urgency.Routine': 'Seguimiento de rutina',
+  'urgency.Monitor': 'Vigilancia estrecha',
+  'urgency.Refer': 'Derivar a nefrología',
+  'urgency.Urgent': 'Derivación urgente',
+
+  'action.Low Risk':
+    'No se detectaron indicadores importantes de enfermedad renal. Se recomienda seguimiento de rutina. Reevaluar en 12 meses.',
+  'action.Moderate Risk':
+    'Algunos marcadores clínicos presentes. Perfil límite. Repetir las pruebas de laboratorio en 3 meses. Vigilar de cerca la presión arterial y el control de la diabetes.',
+  'action.High Risk':
+    'Perfil clínico muy sugestivo de enfermedad renal. Se recomienda derivación a nefrología. Se aconseja un estudio completo de la función renal.',
+  'action.Critical Risk':
+    'Perfil clínico altamente compatible con enfermedad renal. Se requiere derivación urgente a nefrología. Es necesaria una evaluación adicional inmediata.',
+
+  'drivers.title': 'Qué determinó este resultado',
+  'drivers.subtitle': 'Contribuciones de las variables',
+  'drivers.loading': 'Analizando contribuciones…',
+  'drivers.unavailable': 'Las explicaciones no están disponibles en este servidor.',
+  'drivers.increases': 'Aumenta el riesgo',
+  'drivers.reduces': 'Reduce el riesgo',
+  'drivers.topDrivers': 'Factores principales',
+  'drivers.note':
+    'Muestra qué mediciones elevaron o redujeron esta predicción. Refleja el razonamiento del modelo, no causalidad clínica.',
 
   'field.patientName': 'Nombre del paciente',
   'field.age': 'Edad',
