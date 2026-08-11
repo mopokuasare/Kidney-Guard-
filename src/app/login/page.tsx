@@ -8,19 +8,15 @@ import { getSupabaseBrowser, isSupabaseConfigured } from '@/lib/supabase/client'
 import { useT } from '@/lib/i18n';
 
 /**
- * Can this browser actually persist a first-party cookie?
- *
- * Supabase SSR auth stores the session in cookies so the server can read it.
- * Embedded app previews, private windows with cookies blocked, and some
- * privacy extensions silently refuse the write, which makes a successful
- * sign-in look like it simply did nothing.
+ * Can this browser persist the session at all? Private windows and some
+ * embedded webviews refuse localStorage, which would otherwise make a
+ * successful sign-in silently evaporate.
  */
-function cookiesWritable(): boolean {
+function storageWritable(): boolean {
   try {
-    document.cookie = 'kg_cookie_test=1; path=/; SameSite=Lax';
-    const ok = document.cookie.includes('kg_cookie_test=1');
-    document.cookie = 'kg_cookie_test=; path=/; Max-Age=0';
-    return ok;
+    window.localStorage.setItem('kg_test', '1');
+    window.localStorage.removeItem('kg_test');
+    return true;
   } catch {
     return false;
   }
@@ -67,20 +63,17 @@ function LoginForm() {
      * page, the middleware sees no session cookie, and bounces straight back
      * to this form with no explanation. Verify first, and say so if it failed.
      */
+    // The session is stored in localStorage, so confirm it actually persisted
+    // before navigating - otherwise a failed save becomes a silent redirect loop.
     const { data: check } = await supabase.auth.getSession();
     setBusy(false);
     if (!check.session) {
-      // Distinguish "this browser refuses cookies" from any other cause, because
-      // the two need completely different actions from the user.
       setError(
-        cookiesWritable()
-          ? 'Signed in, but the session was not saved. This browser accepted a test ' +
-            'cookie, so the session cookie may be too large or blocked by an extension. ' +
-            'Try again in a normal browser window, or disable extensions for this site.'
-          : 'Your browser is blocking cookies for this site, so the sign-in cannot be ' +
-            'saved. If you are viewing this inside an app preview or a private window, ' +
-            'open https://kidney-guard-eosin.vercel.app directly in Chrome, Edge or ' +
-            'Firefox and sign in there.'
+        storageWritable()
+          ? 'Signed in, but the session could not be saved. Please try again.'
+          : 'This browser is blocking local storage for the site, so the sign-in ' +
+            'cannot be saved. Open the app in a normal browser window (not a private ' +
+            'window or an in-app preview) and sign in there.'
       );
       return;
     }

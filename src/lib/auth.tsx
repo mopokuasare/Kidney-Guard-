@@ -36,21 +36,11 @@ const AuthContext = createContext<AuthCtx>({
   signOut: async () => {},
 });
 
-export function AuthProvider({
-  children,
-  initialEmail = null,
-  initialProfile = null,
-}: {
-  children: React.ReactNode;
-  /** Resolved server-side in the root layout; authoritative on first paint. */
-  initialEmail?: string | null;
-  initialProfile?: Profile | null;
-}) {
+export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
-  const [profile, setProfile] = useState<Profile | null>(initialProfile);
-  const [email, setEmail] = useState<string | null>(initialEmail);
-  // If the server already resolved a user there is nothing to wait for.
-  const [loading, setLoading] = useState(!initialEmail);
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [email, setEmail] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const supabase = getSupabaseBrowser();

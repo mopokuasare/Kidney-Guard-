@@ -1,95 +1,23 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { createServerClient } from '@supabase/ssr';
 
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-// Routes reachable without a session.
-// '/api/debug' is the temporary session diagnostic; it must stay reachable even
-// when the middleware believes there is no session. Remove it with the route.
-const PUBLIC_PATHS = ['/login', '/signup', '/auth', '/api/debug'];
-
-export async function middleware(request: NextRequest) {
-  // If Supabase isn't configured yet, don't lock anyone out — let the app run.
-  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-    return NextResponse.next();
-  }
-
-  let response = NextResponse.next({ request });
-
-  const supabase = createServerClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-    cookies: {
-      getAll() {
-        return request.cookies.getAll();
-      },
-      setAll(cookiesToSet) {
-        cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value));
-        response = NextResponse.next({ request });
-        cookiesToSet.forEach(({ name, value, options }) =>
-          response.cookies.set(name, value, options)
-        );
-      },
-    },
-  });
-
-  /**
-   * Routing decisions use getSession(), which reads and decodes the session
-   * cookie locally. getUser() would instead call Supabase over the network on
-   * EVERY navigation, so any blip, rate limit or cold start returned "no user"
-   * and ejected a signed-in clinician back to /login mid-consultation. That
-   * made page changes only as reliable as a third-party round-trip.
-   *
-   * The trade-off is deliberate: a locally-decoded session is not
-   * cryptographically re-verified here, so this decides ONLY what page to show.
-   * It grants access to no data. Every patient record is protected by row-level
-   * security in PostgreSQL, which independently verifies the JWT on each query,
-   * and the layout still calls getUser() for the authenticated identity.
-   */
-  const { data: sessionData } = await supabase.auth.getSession();
-  const session = sessionData?.session ?? null;
-
-  // A session whose access token has already expired should not keep someone in.
-  const expired =
-    session?.expires_at != null && session.expires_at * 1000 < Date.now();
-  const user = session && !expired ? session.user : null;
-
-  const { pathname } = request.nextUrl;
-  const isPublic = PUBLIC_PATHS.some((p) => pathname.startsWith(p));
-
-  /**
-   * getUser() may have rotated the access/refresh token, in which case the new
-   * cookies live on `response`. A fresh NextResponse.redirect() would NOT carry
-   * them, so the rotated session would be thrown away and the very next request
-   * would look signed-out again — the cause of being bounced back to /login
-   * while navigating. Copy the cookies onto every redirect we return.
-   */
-  const redirectPreservingSession = (url: URL) => {
-    const redirect = NextResponse.redirect(url);
-    response.cookies.getAll().forEach((cookie) => redirect.cookies.set(cookie));
-    return redirect;
-  };
-
-  // Not signed in and trying to reach a protected page → send to login.
-  if (!user && !isPublic) {
-    const url = request.nextUrl.clone();
-    url.pathname = '/login';
-    url.search = '';
-    url.searchParams.set('redirect', pathname);
-    return redirectPreservingSession(url);
-  }
-
-  // Already signed in but on an auth page → send to the app.
-  if (user && (pathname === '/login' || pathname === '/signup')) {
-    const url = request.nextUrl.clone();
-    url.pathname = '/';
-    url.search = '';
-    return redirectPreservingSession(url);
-  }
-
-  return response;
+/**
+ * Route protection is enforced on the client (see AppShell), not here.
+ *
+ * This middleware used to gate every navigation on a Supabase session cookie.
+ * That only works if the browser persists the cookie, and in embedded webviews,
+ * preview panes and privacy-restricted browsers the write is silently refused -
+ * so a successful sign-in was discarded and the next page change bounced the
+ * clinician back to /login. The session now lives in localStorage, which the
+ * server cannot read, so gating here would reject everyone.
+ *
+ * This is not a weakening of data security: every patient record is protected
+ * by row-level security in PostgreSQL, which verifies the JWT on every query
+ * regardless of what the browser is allowed to render.
+ */
+export function middleware(_request: NextRequest) {
+  return NextResponse.next();
 }
 
 export const config = {
-  // Run on everything except Next internals and static assets.
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)'],
+  matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],
 };

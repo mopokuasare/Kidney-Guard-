@@ -1,11 +1,39 @@
 'use client';
 
-import { useState } from 'react';
-import { Menu } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { useRouter, usePathname } from 'next/navigation';
+import { Menu, Loader2 } from 'lucide-react';
 import { Sidebar } from '@/components/Sidebar';
+import { useAuth } from '@/lib/auth';
 
 export const AppShell = ({ children }: { children: React.ReactNode }) => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const { signedIn, loading, configured } = useAuth();
+  const router = useRouter();
+  const pathname = usePathname();
+
+  /**
+   * Client-side route guard.
+   *
+   * The session is held in localStorage so it survives browsers that refuse
+   * cookies, which means the server cannot see it and the middleware cannot do
+   * this check. Wait for auth to resolve before deciding, otherwise a signed-in
+   * clinician would be redirected during the first render.
+   */
+  useEffect(() => {
+    if (!configured || loading || signedIn) return;
+    const redirect = pathname && pathname !== '/' ? `?redirect=${encodeURIComponent(pathname)}` : '';
+    router.replace(`/login${redirect}`);
+  }, [configured, loading, signedIn, pathname, router]);
+
+  // Hold the shell back until auth is known, so protected content never flashes.
+  if (configured && (loading || !signedIn)) {
+    return (
+      <div className="min-h-screen bg-main-bg flex items-center justify-center">
+        <Loader2 size={22} className="animate-spin text-slate-300" />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-main-bg flex">
