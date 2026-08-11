@@ -156,7 +156,72 @@ age 50.
 Re-validate against the documented example before deploying: a 52-year-old with
 entirely normal labs should land in the single digits, not at 74%.
 
-## 7. Reproducing this analysis
+## 7. Age response after retraining — investigated, and it is correct
+
+The retrained model's age response looks suspiciously flat: holding every other
+input at the population median, risk moves only **5% → 7%** across ages 30 to 80.
+This was investigated and is **correct behaviour**, not under-fitting.
+
+### The marginal age effect is real but confounded
+
+Restricted to normal creatinine (0.7–0.95 mg/dl), the empirical KDIGO-positive
+rate rises steeply with age — and note it is driven **entirely by albuminuria**,
+because at normal creatinine eGFR never falls below 60 at any age:
+
+| Age | KDIGO+ | via eGFR<60 | via ACR≥30 | mean SBP | diabetic |
+|---|---|---|---|---|---|
+| 20–35 | 3.6% | **0.0%** | 3.6% | 112.6 | 1.7% |
+| 35–50 | 4.4% | **0.0%** | 4.4% | 116.2 | 5.8% |
+| 50–65 | 9.0% | **0.0%** | 9.0% | 124.5 | 16.3% |
+| 65–90 | 15.6% | **0.0%** | 15.6% | 131.4 | 16.9% |
+
+Blood pressure and diabetes prevalence climb alongside age. Age is a **proxy**
+for them.
+
+### Controlling for the real drivers collapses the age effect
+
+Non-diabetic patients with SBP 110–130 only (n=1218):
+
+| Age | KDIGO+ |
+|---|---|
+| 20–40 | 3.2% ± 0.9 |
+| 40–55 | 2.6% ± 1.0 |
+| 55–70 | 3.8% ± 1.0 |
+| 70–90 | 7.4% ± 2.3 |
+
+The 6× marginal gradient collapses to roughly flat, with a modest residual rise
+only past 70. Meanwhile blood pressure at fixed age (45–65, non-diabetic) shows a
+far stronger effect:
+
+| SBP | KDIGO+ |
+|---|---|
+| 90–115 | 3.1% |
+| 115–130 | 3.2% |
+| 130–145 | 5.9% |
+| 145–200 | **24.7%** |
+
+A logistic regression on the same subgroup agrees: standardised coefficients are
+`bp_systolic +0.529`, `diabetes_diagnosed +0.432`, and **`age −0.031`** — age
+carries essentially no independent signal once the other seven features are known.
+
+### Conclusion
+
+A single-feature sweep holding everything else at the median measures the
+**conditional** effect: *"if a 30-year-old and an 80-year-old had identical blood
+pressure, diabetes status, BMI and creatinine, how would their risk differ?"*
+The answer is correctly "barely". The model's 5% → 7% closely matches the
+empirically controlled 3.2% → 7.4%, including the residual rise after 70.
+
+The old model's steep age cliff was an artefact of the mislabelled target, which
+made age nearly deterministic of the label. Removing it, age correctly recedes
+behind blood pressure and diabetes.
+
+**Defensible position:** *"age appears predictive in univariate analysis, but the
+effect is mediated by blood pressure and diabetes; the model attributes risk to
+the causal drivers rather than the demographic proxy, which is why a single-feature
+age sweep looks flat."*
+
+## 8. Reproducing this analysis
 
 Requires `scikit-learn==1.8.0`, `numpy` 2.x, `xgboost`, `shap` (newer scikit-learn
 fails to unpickle with `ModuleNotFoundError: No module named '_loss'`).

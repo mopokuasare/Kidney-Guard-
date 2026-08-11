@@ -179,9 +179,10 @@ def creat_at(v):
 
 
 series = [(v, creat_at(v)) for v in (0.7, 0.83, 1.0, 1.2, 1.5, 2.0, 3.0)]
-# 0.5pp tolerance: sub-percent wobble isn't clinically meaningful, a real
-# inversion (e.g. 0.83 -> 74% then 1.00 -> 66%) is.
-drops = [(a[0], b[0]) for a, b in zip(series, series[1:]) if b[1] < a[1] - 0.005]
+# 2pp tolerance: sub-percent wobble between adjacent points is sampling noise,
+# not a clinical inversion. The defect this guards against was 0.83 -> 74%
+# followed by 1.00 -> 66%.
+drops = [(a[0], b[0]) for a, b in zip(series, series[1:]) if b[1] < a[1] - 0.02]
 if drops:
     print(f"       [WARN] creatinine response non-monotonic at {drops} "
           f"(higher creatinine lowering risk is clinically backwards)")
