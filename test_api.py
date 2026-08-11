@@ -62,7 +62,13 @@ check(
     ],
     f"got {h['features']}",
 )
-check("threshold ~0.4439", abs(h["threshold"] - 0.4439) < 0.01, f"got {h['threshold']}")
+# Assert against the loaded artifact, not a hard-coded constant: the threshold
+# is re-derived on every retrain (0.4439 pre-relabel, 0.3130 after).
+check("threshold matches threshold.pkl",
+      abs(h["threshold"] - round(ckd_api.optimal_threshold, 4)) < 1e-6,
+      f"api {h['threshold']} vs pkl {ckd_api.optimal_threshold}")
+check("threshold in a sane range", 0.05 < h["threshold"] < 0.95,
+      f"got {h['threshold']}")
 print(f"       SHAP enabled: {h['shap_enabled']}")
 
 # ── Prediction: healthy patient ──────────────────────────────────

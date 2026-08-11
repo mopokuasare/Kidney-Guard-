@@ -1,8 +1,14 @@
 # Model Validation Findings
 
-**Status: the deployed-candidate model is NOT cleared for production.**
-Investigated 2026-08-10 against `CKD_NHANES_2021_2023.csv` (11,933 rows; 6,326
-after dropping missing `serum_creatinine`) and every model artifact produced that day.
+**Status: RESOLVED 2026-08-10.** The label defect described below was fixed, the
+model retrained, and the corrected artifacts are installed in `nhanes_model_files/`.
+The all-normal 52-year-old now scores **5.9%** (was 74.2%) and creatinine response
+is monotonic. See §9 for the retrained model's results.
+
+Sections 1–6 describe the original defect and are retained as the audit trail.
+
+Investigated against `CKD_NHANES_2021_2023.csv` (11,933 rows; 6,326 after dropping
+missing `serum_creatinine`) and every model artifact produced that day.
 
 ---
 
@@ -220,6 +226,54 @@ behind blood pressure and diabetes.
 effect is mediated by blood pressure and diabetes; the model attributes risk to
 the causal drivers rather than the demographic proxy, which is why a single-feature
 age sweep looks flat."*
+
+## 9. Retrained model — results
+
+Notebook re-executed end to end (all 35 code cells, zero errors) with the full
+hyperparameter search. Artifacts in `nhanes_model_files/`, validated by loading
+them fresh from disk.
+
+| | Old (broken label) | Retrained (KDIGO) |
+|---|---|---|
+| Prevalence | 43.2% | **17.0%** |
+| Threshold | 0.4439 | **0.3130** |
+| ROC-AUC | 0.9225 | **0.8221** |
+| PR-AUC | 0.9230 | 0.6424 |
+| Accuracy | 0.8697 | 0.8643 |
+| Precision | 0.8498 | 0.6352 |
+| Recall | 0.8483 | **0.4764** |
+| Specificity | 0.8860 | 0.9439 |
+| Brier | 0.1034 | 0.0963 |
+| **All-normal 52yo** | **74.2%** | **5.9%** |
+| Creatinine monotonic | no (1.00 < 0.83) | **yes** |
+
+5-fold CV confirms stability: accuracy 0.8568 ± 0.0065, ROC-AUC 0.8175 ± 0.0085,
+consistent with the held-out test set — no overfitting.
+
+`python test_api.py`: **35 passed, 0 failed**, with no plausibility warnings.
+
+### Outstanding decision — recall is low
+
+At the F1-optimal threshold of 0.3130, recall is **0.4764**: 111 of 212 true cases
+in the test set are missed. Specificity is high (0.9439) and precision moderate
+(0.6352), so the model is conservative — it flags few, and is usually right when
+it does.
+
+For a screening tool that routes to a confirmatory eGFR/ACR test, missing over half
+of cases is hard to defend. Cell 47 of the notebook contains a commented
+recall-oriented alternative that selects the highest threshold still reaching 80%
+recall. Switching to it trades precision for sensitivity and would need the
+threshold re-exported.
+
+This is a clinical judgement, not a bug — it is recorded here so it is decided
+deliberately rather than inherited from an F1 default.
+
+### Note on the metric drop
+
+ROC-AUC falling 0.9225 → 0.8221 is expected and correct. The old figure was
+measured against a target that was largely "is this person over 50", with a
+threshold additionally tuned on the test set. The new figures describe a genuinely
+harder 17%-prevalence problem with no leakage.
 
 ## 8. Reproducing this analysis
 

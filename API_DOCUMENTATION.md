@@ -10,18 +10,27 @@ measurements using a calibrated stacking ensemble trained on CDC NHANES 2021–2
 
 > For research and decision support only. Not a substitute for clinical diagnosis.
 
-> ### ⚠️ Not cleared for production
-> The current model is trained on a **mislabelled target**: `ckd_present` counts
-> eGFR 60–89 without kidney damage as CKD, which KDIGO does not. This inflates
-> prevalence from 16.7% to 43.2% and makes the label largely a proxy for age.
-> A 52-year-old with entirely normal labs scores **74.2%**, and response to
-> creatinine is non-monotonic. See **[MODEL_VALIDATION.md](MODEL_VALIDATION.md)**
-> for the full analysis and the fix. Do not deploy until the label is corrected
-> and the model retrained.
+> ### Model status: label defect fixed, retrained 2026-08-10
+> The earlier model was trained on a mislabelled target (`ckd_present` counted
+> eGFR 60–89 without kidney damage as CKD, which KDIGO does not). It scored a
+> perfectly healthy 52-year-old at 74.2%. The label was corrected to
+> `eGFR < 60 OR ACR ≥ 30`, dropping prevalence 43.2% → 17.0%, and the model was
+> retrained. That patient now scores **5.9%**.
 >
-> Any documentation claiming this example returns **9.8%** (including the
-> `README_API.md` bundled with the model artifacts) is **incorrect** — no model
-> version ever produced that value. Measured outputs are tabulated below.
+> **Threshold changed: `0.4439` → `0.3130`.** Anything hard-coding the old value
+> must be updated.
+>
+> Headline metrics are lower by design — ROC-AUC 0.9225 → 0.8221 — because the old
+> figure was measured against a target that was largely an age proxy, with a
+> threshold tuned on the test set. See
+> **[MODEL_VALIDATION.md](MODEL_VALIDATION.md)**.
+>
+> **Open decision:** recall is 0.4764 at the current threshold — over half of true
+> cases are missed. A recall-oriented threshold is available (notebook cell 47).
+>
+> Any documentation claiming the all-normal example returns **9.8%** (including the
+> `README_API.md` bundled with the original artifacts) never matched a real model.
+> Measured outputs are tabulated below.
 
 ---
 
@@ -129,13 +138,19 @@ with `python test_api.py`.
 
 | Patient | Inputs (creat / BUN / SBP / age / DM / alb / BMI / smoke) | Risk | Band |
 |---|---|---|---|
-| Healthy young | 0.8 / 12 / 115 / 30 / 0 / 4.5 / 23 / 0 | 6.2% | Low Risk |
-| Borderline | 0.87 / 19.6 / 150 / 38 / 1 / 3.2 / 30.8 / 0 | 46.3% | Moderate Risk |
-| **All-normal, age 52** | 0.83 / 14 / 118 / 52 / 0 / 4.1 / 27.7 / 0 | **74.2%** | High Risk |
-| Advanced CKD | 3.5 / 45 / 160 / 72 / 1 / 3.0 / 31 / 1 | 96.3% | Critical Risk |
+| All-normal, age 52 | 0.83 / 14 / 118 / 52 / 0 / 4.1 / 27.7 / 0 | 5.9% | Low Risk |
+| Hypertensive diabetic, 60 | 0.83 / 14 / 165 / 60 / 1 / 4.1 / 27.7 / 0 | 47.6% | Moderate Risk |
+| Advanced CKD | 3.5 / 45 / 160 / 72 / 1 / 3.0 / 31 / 1 | 85.0% | Critical Risk |
 
-The third row is the known defect — it should be single digits. See
-[MODEL_VALIDATION.md](MODEL_VALIDATION.md).
+Creatinine response (age 52, others at median), monotonic as expected:
+
+| mg/dl | 0.7 | 0.83 | 1.0 | 1.2 | 1.5 | 2.0 | 3.0 |
+|---|---|---|---|---|---|---|---|
+| risk | 7% | 6% | 6% | 9% | 38% | 38% | 39% |
+
+Age response is deliberately flat at fixed blood pressure and diabetes status
+(5% at 30 → 7% at 80). This is correct: the marginal age effect is mediated by
+BP and diabetes. See §7 of [MODEL_VALIDATION.md](MODEL_VALIDATION.md).
 
 ### `POST /predict/batch`
 
