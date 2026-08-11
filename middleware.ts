@@ -5,7 +5,9 @@ const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
 // Routes reachable without a session.
-const PUBLIC_PATHS = ['/login', '/signup', '/auth'];
+// '/api/debug' is the temporary session diagnostic; it must stay reachable even
+// when the middleware believes there is no session. Remove it with the route.
+const PUBLIC_PATHS = ['/login', '/signup', '/auth', '/api/debug'];
 
 export async function middleware(request: NextRequest) {
   // If Supabase isn't configured yet, don't lock anyone out — let the app run.
