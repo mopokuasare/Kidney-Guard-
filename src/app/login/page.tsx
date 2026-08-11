@@ -7,6 +7,25 @@ import { Loader2, ShieldCheck } from 'lucide-react';
 import { getSupabaseBrowser, isSupabaseConfigured } from '@/lib/supabase/client';
 import { useT } from '@/lib/i18n';
 
+/**
+ * Can this browser actually persist a first-party cookie?
+ *
+ * Supabase SSR auth stores the session in cookies so the server can read it.
+ * Embedded app previews, private windows with cookies blocked, and some
+ * privacy extensions silently refuse the write, which makes a successful
+ * sign-in look like it simply did nothing.
+ */
+function cookiesWritable(): boolean {
+  try {
+    document.cookie = 'kg_cookie_test=1; path=/; SameSite=Lax';
+    const ok = document.cookie.includes('kg_cookie_test=1');
+    document.cookie = 'kg_cookie_test=; path=/; Max-Age=0';
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
 function LoginForm() {
   const { t } = useT();
   const router = useRouter();
@@ -51,10 +70,17 @@ function LoginForm() {
     const { data: check } = await supabase.auth.getSession();
     setBusy(false);
     if (!check.session) {
+      // Distinguish "this browser refuses cookies" from any other cause, because
+      // the two need completely different actions from the user.
       setError(
-        'Signed in, but the session could not be stored in this browser. ' +
-          'Check that cookies are enabled for this site and that you are not in a ' +
-          'private window with cookies blocked, then try again.'
+        cookiesWritable()
+          ? 'Signed in, but the session was not saved. This browser accepted a test ' +
+            'cookie, so the session cookie may be too large or blocked by an extension. ' +
+            'Try again in a normal browser window, or disable extensions for this site.'
+          : 'Your browser is blocking cookies for this site, so the sign-in cannot be ' +
+            'saved. If you are viewing this inside an app preview or a private window, ' +
+            'open https://kidney-guard-eosin.vercel.app directly in Chrome, Edge or ' +
+            'Firefox and sign in there.'
       );
       return;
     }
