@@ -14,9 +14,11 @@ import {
   extractFromPdf,
   validatePatientInput,
   savePrediction,
+  getClinicalStats,
   FEATURE_LABELS,
   type PatientFeatures,
   type RiskAssessment,
+  type ClinicalStats,
 } from '@/lib/ckdService';
 import { generateSummaryPdf } from '@/lib/pdf';
 import { useT } from '@/lib/i18n';
@@ -33,6 +35,7 @@ import {
   Stethoscope,
   FlaskConical,
   Heart,
+  Users,
   Loader2,
   CheckCircle2,
   XCircle,
@@ -78,6 +81,7 @@ export default function PredictRisk() {
   // keys its SHAP fetch on this object.
   const [submitted, setSubmitted] = useState<PatientFeatures | null>(null);
   const [online, setOnline] = useState<boolean | null>(null);
+  const [stats, setStats] = useState<ClinicalStats | null>(null);
 
   // PDF lab-report upload → extract → clinician verifies → predict
   const [pdfBusy, setPdfBusy] = useState(false);
@@ -89,6 +93,7 @@ export default function PredictRisk() {
 
   useEffect(() => {
     checkApiHealth().then((h) => setOnline(h.online));
+    getClinicalStats().then(setStats);
   }, []);
 
   const set = (key: keyof FormState, value: string) =>
@@ -129,6 +134,7 @@ export default function PredictRisk() {
     setResult(res.data);
     setSubmitted(features);
     await savePrediction(features, res.data, { patientName: form.name });
+    getClinicalStats().then(setStats); // reflect the new assessment in the cards
     setTimeout(() => resultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
   };
 
@@ -252,12 +258,32 @@ export default function PredictRisk() {
         </div>
       )}
 
-      {/* Stats Grid */}
+      {/* Caseload summary — clinical figures, not model metadata */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-6 mb-6">
-        <DashboardCard title="Model" value="Ensemble" subtitle="RF+GB+XGBoost→LR" icon={BrainCircuit} />
-        <DashboardCard title="Dataset" value="NHANES" subtitle="2021–2023 · 6,326" icon={Activity} />
-        <DashboardCard title="Standard" value="KDIGO" subtitle="2024 · CKD-EPI 2021" icon={Target} />
-        <DashboardCard title="Features" value="8" subtitle="routine labs" icon={Zap} />
+        <DashboardCard
+          title={t('stats.today')}
+          value={stats ? String(stats.today) : '—'}
+          subtitle={t('stats.todaySub')}
+          icon={Activity}
+        />
+        <DashboardCard
+          title={t('stats.referral')}
+          value={stats ? String(stats.needsReferral) : '—'}
+          subtitle={t('stats.referralSub')}
+          icon={AlertTriangle}
+        />
+        <DashboardCard
+          title={t('stats.patients')}
+          value={stats ? String(stats.patients) : '—'}
+          subtitle={t('stats.patientsSub')}
+          icon={Users}
+        />
+        <DashboardCard
+          title={t('stats.sensitivity')}
+          value="74%"
+          subtitle={t('stats.sensitivitySub')}
+          icon={Target}
+        />
       </div>
 
       {/* Form Section */}

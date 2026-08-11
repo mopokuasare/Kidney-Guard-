@@ -54,10 +54,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (active) setProfile((data as Profile) ?? null);
     };
 
-    supabase.auth.getUser().then(({ data }) => {
+    /**
+     * getSession() reads the session straight from the cookie, so the UI knows
+     * who is signed in immediately. getUser() would instead make a network
+     * round-trip to Supabase, and while that was in flight (or if it failed)
+     * `user` stayed null and the sidebar rendered a "Sign in" link to an
+     * already-signed-in clinician. The session is still validated server-side
+     * by the middleware on every request, so trusting the cookie for UI state
+     * is safe.
+     */
+    supabase.auth.getSession().then(({ data }) => {
       if (!active) return;
-      setUser(data.user ?? null);
-      if (data.user) loadProfile(data.user.id);
+      const sessionUser = data.session?.user ?? null;
+      setUser(sessionUser);
+      if (sessionUser) loadProfile(sessionUser.id);
       setLoading(false);
     });
 

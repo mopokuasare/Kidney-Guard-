@@ -429,6 +429,47 @@ export const getPatientHistory = async (name: string): Promise<PredictionRow[]> 
   return (data as PredictionRow[]) ?? [];
 };
 
+export interface ClinicalStats {
+  /** Assessments recorded since midnight today. */
+  today: number;
+  /** Assessments in the shared log flagged High or Critical Risk. */
+  needsReferral: number;
+  /** Distinct named patients assessed. */
+  patients: number;
+  /** Most recent assessment timestamp, ISO string. */
+  lastAt: string | null;
+}
+
+/**
+ * Caseload figures for the clinician's summary cards. Returns zeros when
+ * Supabase isn't configured or nothing has been recorded yet — the cards then
+ * read as an empty caseload rather than showing invented numbers.
+ */
+export const getClinicalStats = async (): Promise<ClinicalStats> => {
+  const empty: ClinicalStats = { today: 0, needsReferral: 0, patients: 0, lastAt: null };
+  const supabase = getSupabaseBrowser();
+  if (!supabase) return empty;
+
+  const { data } = await supabase
+    .from('predictions')
+    .select('patient_name, tier, created_at')
+    .order('created_at', { ascending: false })
+    .limit(1000);
+
+  if (!data?.length) return empty;
+
+  const midnight = new Date();
+  midnight.setHours(0, 0, 0, 0);
+
+  const rows = data as { patient_name: string | null; tier: string | null; created_at: string }[];
+  return {
+    today: rows.filter((r) => new Date(r.created_at) >= midnight).length,
+    needsReferral: rows.filter((r) => r.tier === 'High Risk' || r.tier === 'Critical Risk').length,
+    patients: new Set(rows.map((r) => r.patient_name).filter(Boolean)).size,
+    lastAt: rows[0]?.created_at ?? null,
+  };
+};
+
 /** Distinct patient names that have at least one saved prediction. */
 export const getDistinctPatients = async (): Promise<string[]> => {
   const supabase = getSupabaseBrowser();

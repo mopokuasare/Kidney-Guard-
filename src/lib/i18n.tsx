@@ -119,6 +119,15 @@ const en: Dict = {
   'field.male': 'Male',
   'field.female': 'Female',
 
+  'stats.today': 'Assessments Today',
+  'stats.todaySub': 'recorded since midnight',
+  'stats.referral': 'Needs Referral',
+  'stats.referralSub': 'high or critical risk',
+  'stats.patients': 'Patients Tracked',
+  'stats.patientsSub': 'with saved history',
+  'stats.sensitivity': 'Detection Rate',
+  'stats.sensitivitySub': 'catches ~3 in 4 cases',
+
   'status.online': 'API Online',
   'status.offline': 'API Offline',
   'status.checking': 'Checking',
@@ -231,6 +240,15 @@ const fr: Dict = {
   'field.male': 'Homme',
   'field.female': 'Femme',
 
+  'stats.today': 'Évaluations aujourd’hui',
+  'stats.todaySub': 'depuis minuit',
+  'stats.referral': 'À orienter',
+  'stats.referralSub': 'risque élevé ou critique',
+  'stats.patients': 'Patients suivis',
+  'stats.patientsSub': 'avec historique enregistré',
+  'stats.sensitivity': 'Taux de détection',
+  'stats.sensitivitySub': 'détecte ~3 cas sur 4',
+
   'status.online': 'API en ligne',
   'status.offline': 'API hors ligne',
   'status.checking': 'Vérification',
@@ -342,6 +360,15 @@ const es: Dict = {
   'field.gender': 'Sexo',
   'field.male': 'Hombre',
   'field.female': 'Mujer',
+
+  'stats.today': 'Evaluaciones de hoy',
+  'stats.todaySub': 'desde medianoche',
+  'stats.referral': 'Requiere derivación',
+  'stats.referralSub': 'riesgo alto o crítico',
+  'stats.patients': 'Pacientes seguidos',
+  'stats.patientsSub': 'con historial guardado',
+  'stats.sensitivity': 'Tasa de detección',
+  'stats.sensitivitySub': 'detecta ~3 de cada 4 casos',
 
   'status.online': 'API en línea',
   'status.offline': 'API fuera de línea',

@@ -75,7 +75,7 @@ const REPORT_LINKS = [
 export const Sidebar = ({ isOpen, onClose }: { isOpen?: boolean; onClose?: () => void }) => {
   const pathname = usePathname();
   const { t, lang, setLang } = useT();
-  const { user, profile, role, signOut, configured } = useAuth();
+  const { user, profile, role, signOut, configured, loading } = useAuth();
 
   const isActive = (href: string) => (href === '/' ? pathname === '/' : pathname.startsWith(href));
 
@@ -170,6 +170,11 @@ export const Sidebar = ({ isOpen, onClose }: { isOpen?: boolean; onClose?: () =>
                 {t('nav.signOut')}
               </button>
             </div>
+          ) : configured && loading ? (
+            /* Auth still resolving — render a placeholder rather than a
+               "Sign in" link, which would otherwise flash at (or stick for)
+               a clinician who is already signed in. */
+            <div className="h-9 rounded-lg bg-slate-800/60 animate-pulse" />
           ) : configured ? (
             <Link
               href="/login"
