@@ -75,7 +75,7 @@ const REPORT_LINKS = [
 export const Sidebar = ({ isOpen, onClose }: { isOpen?: boolean; onClose?: () => void }) => {
   const pathname = usePathname();
   const { t, lang, setLang } = useT();
-  const { user, profile, role, signOut, configured, loading } = useAuth();
+  const { profile, role, email, signedIn, signOut, configured, loading } = useAuth();
 
   const isActive = (href: string) => (href === '/' ? pathname === '/' : pathname.startsWith(href));
 
@@ -151,14 +151,14 @@ export const Sidebar = ({ isOpen, onClose }: { isOpen?: boolean; onClose?: () =>
           </div>
 
           {/* User / auth block */}
-          {configured && user ? (
+          {configured && signedIn ? (
             <div className="bg-slate-800/50 rounded-xl p-3 border border-slate-700">
               <div className="flex items-center gap-3 mb-3">
                 <div className="w-9 h-9 rounded-full bg-orange-500/20 text-orange-400 flex items-center justify-center font-bold text-sm shrink-0">
-                  {(profile?.full_name || user.email || '?').charAt(0).toUpperCase()}
+                  {(profile?.full_name || email || '?').charAt(0).toUpperCase()}
                 </div>
                 <div className="min-w-0">
-                  <p className="text-xs font-bold text-white truncate">{profile?.full_name || user.email}</p>
+                  <p className="text-xs font-bold text-white truncate">{profile?.full_name || email}</p>
                   {role && <p className="text-[10px] text-orange-400/80 uppercase tracking-wider font-bold">{t(`auth.role.${role}`)}</p>}
                 </div>
               </div>
