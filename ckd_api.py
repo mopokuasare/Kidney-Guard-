@@ -60,13 +60,21 @@ else:
 
 
 # ── Risk stratification ──────────────────────────────────────────
-# Bands are the clinical stratification from the training notebook and are
-# intentionally independent of the F1-optimal decision threshold below.
+# The Low/Moderate boundary is pinned to the decision threshold so the band and
+# the screening flag cannot contradict each other. Before this, with the
+# recall-oriented threshold at 0.0875 against a hard-coded 0.25 boundary, a
+# patient could be flagged "KD Risk" while being told "Low Risk - reassess in
+# 12 months", which defeats the point of a sensitive threshold.
+#
+# The upper boundaries (0.50 referral, 0.75 urgent) are the clinical
+# stratification from the training notebook and are deliberately unchanged.
+_LOW_MAX = round(optimal_threshold, 4)
+
 RISK_BANDS = [
-    (0.00, 0.25, "Low Risk", "Routine",
+    (0.00, _LOW_MAX, "Low Risk", "Routine",
      "No strong indicators of kidney disease detected. "
      "Routine follow-up recommended. Reassess in 12 months."),
-    (0.25, 0.50, "Moderate Risk", "Monitor",
+    (_LOW_MAX, 0.50, "Moderate Risk", "Monitor",
      "Some clinical markers present. Borderline profile. "
      "Repeat laboratory tests in 3 months. "
      "Monitor blood pressure and diabetes control closely."),
