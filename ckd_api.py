@@ -11,13 +11,22 @@ Inference chain (must match the training notebook exactly):
     stacking ensemble -> P(KD risk) -> threshold -> risk band
 """
 
+import io
 import os
+import re
 
 import joblib
 import numpy as np
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
+
+try:
+    import pdfplumber
+    PDF_AVAILABLE = True
+except ImportError:  # /extract degrades to 503; the rest of the API is unaffected
+    pdfplumber = None
+    PDF_AVAILABLE = False
 
 # ── Load model files ─────────────────────────────────────────────
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -57,6 +66,39 @@ if ENABLE_SHAP:
         print(f"[WARN] SHAP explainer failed to load ({exc}) - /explain disabled")
 else:
     print("[INFO] ENABLE_SHAP=0 - /explain disabled")
+
+# ── LIME explainer ───────────────────────────────────────────────
+# Built on the UNSCALED training matrix so the conditions it returns read in
+# clinical units ("serum_creatinine > 0.98") rather than z-scores. The predict
+# function therefore has to scale internally before calling the model.
+# ~45 KB artifact, ~1 s per explanation.
+ENABLE_LIME = os.getenv("ENABLE_LIME", "1").lower() not in ("0", "false", "no")
+LIME_SAMPLES = int(os.getenv("LIME_SAMPLES", "1000"))
+
+lime_explainer = None
+if ENABLE_LIME:
+    try:
+        _lime_train = load_pkl("lime_train_data.pkl")
+        from lime import lime_tabular
+
+        _categorical = [features.index(f) for f in ("diabetes_diagnosed", "ever_smoked")
+                        if f in features]
+        lime_explainer = lime_tabular.LimeTabularExplainer(
+            np.asarray(_lime_train, dtype=np.float64),
+            feature_names=features,
+            class_names=["No KD Risk", "KD Risk"],
+            categorical_features=_categorical,
+            mode="classification",
+            discretize_continuous=True,
+            random_state=42,
+        )
+        print("[OK] LIME explainer ready")
+    except FileNotFoundError:
+        print("[WARN] lime_train_data.pkl not found - LIME disabled")
+    except Exception as exc:  # noqa: BLE001 - never block startup on LIME
+        print(f"[WARN] LIME unavailable ({exc}) - continuing without it")
+else:
+    print("[INFO] ENABLE_LIME=0 - LIME disabled")
 
 
 # ── Risk stratification ──────────────────────────────────────────
@@ -208,6 +250,17 @@ class FeatureContribution(BaseModel):
     direction: str
 
 
+class LimeContribution(BaseModel):
+    feature: str
+    label: str
+    value: float
+    """Human-readable rule LIME fitted locally, e.g. 'serum_creatinine > 0.98'."""
+    condition: str
+    lime_weight: float
+    abs_contribution_pct: float
+    direction: str
+
+
 class Explanation(BaseModel):
     kd_risk_score: float
     predicted_class: str
@@ -216,6 +269,13 @@ class Explanation(BaseModel):
     top_drivers: list[str]
     method: str
     disclaimer: str
+    # LIME runs alongside SHAP. Empty list when LIME is disabled or failed,
+    # so the frontend can render SHAP on its own without special-casing.
+    lime_contributions: list[LimeContribution] = []
+    lime_method: str | None = None
+    lime_available: bool = False
+    # Features both methods place in their top 3 - useful corroboration.
+    agreement: list[str] = []
 
 
 class HealthResponse(BaseModel):
@@ -225,6 +285,19 @@ class HealthResponse(BaseModel):
     threshold: float
     version: str
     shap_enabled: bool
+    lime_enabled: bool
+
+
+class ExtractionResult(BaseModel):
+    filename: str
+    extracted_values: dict
+    display_values: dict
+    missing_fields: list[str]
+    extraction_confidence: float
+    fields_extracted: int
+    fields_expected: int
+    notes: list[str]
+    instructions: str
 
 
 # ── Core inference ───────────────────────────────────────────────
@@ -266,6 +339,158 @@ def run_prediction(patient: "PatientFeatures"):
     return X_scaled, resolved, imputed, prob_kd, prob_no_kd, pred_int, pred_label, strat
 
 
+# ── PDF lab-report parsing ───────────────────────────────────────
+# Ordered most-specific first: the first pattern that matches wins, so
+# "serum creatinine" is preferred over a bare "creatinine" that might belong to
+# a urine panel. NUM matches an optional-decimal number.
+_NUM = r"([0-9]+(?:\.[0-9]+)?)"
+
+EXTRACTION_PATTERNS: dict[str, list[str]] = {
+    "serum_creatinine": [
+        rf"serum\s*creatinine\D{{0,20}}{_NUM}",
+        rf"\bs\.?\s*creatinine\D{{0,20}}{_NUM}",
+        rf"\bcreatinine\D{{0,20}}{_NUM}",
+        rf"\bscr\b\D{{0,20}}{_NUM}",
+    ],
+    "blood_urea_nitrogen": [
+        rf"blood\s*urea\s*nitrogen\D{{0,20}}{_NUM}",
+        rf"\bbun\b\D{{0,20}}{_NUM}",
+        rf"\burea\s*nitrogen\D{{0,20}}{_NUM}",
+        rf"\burea\b\D{{0,20}}{_NUM}",
+    ],
+    "bp_systolic": [
+        rf"systolic\s*(?:blood\s*pressure)?\D{{0,20}}{_NUM}",
+        rf"\bsbp\b\D{{0,20}}{_NUM}",
+        # "BP: 138/86" - take the first number only
+        rf"blood\s*pressure\D{{0,10}}{_NUM}\s*/\s*[0-9]+",
+        rf"\bbp\b\D{{0,10}}{_NUM}\s*/\s*[0-9]+",
+    ],
+    "age": [
+        rf"\bage\D{{0,10}}{_NUM}",
+        rf"{_NUM}\s*(?:years?|yrs?)\s*old",
+    ],
+    "albumin_serum": [
+        rf"serum\s*albumin\D{{0,20}}{_NUM}",
+        # Guard against urine albumin / microalbumin, a different analyte
+        rf"(?<!micro)(?<!urine\s)\balbumin\b(?!\s*/\s*creat)\D{{0,20}}{_NUM}",
+    ],
+    "bmi": [
+        rf"body\s*mass\s*index\D{{0,20}}{_NUM}",
+        rf"\bbmi\b\D{{0,20}}{_NUM}",
+    ],
+}
+
+# yes/no style fields
+BINARY_PATTERNS: dict[str, list[str]] = {
+    "diabetes_diagnosed": [
+        r"diabetes\s*(?:mellitus)?\s*(?:diagnos\w*)?\s*[:\-]?\s*(yes|no|positive|negative|present|absent|y|n)",
+        r"\bdm\b\s*[:\-]?\s*(yes|no|positive|negative|y|n)",
+    ],
+    "ever_smoked": [
+        r"(?:ever\s*)?smok\w*\s*(?:status|history)?\s*[:\-]?\s*(yes|no|never|former|current|positive|negative|y|n)",
+        r"\btobacco\s*(?:use)?\s*[:\-]?\s*(yes|no|never|former|current|y|n)",
+    ],
+}
+
+_AFFIRMATIVE = {"yes", "y", "positive", "present", "former", "current"}
+
+# Values outside these bounds are almost certainly a misparse (a reference
+# range, a different analyte, a page number), so they are dropped with a note
+# rather than silently fed to the model.
+PLAUSIBLE = {
+    "serum_creatinine": (0.1, 30.0),
+    "blood_urea_nitrogen": (1.0, 250.0),
+    "bp_systolic": (50.0, 300.0),
+    "age": (1.0, 120.0),
+    "albumin_serum": (0.5, 8.0),
+    "bmi": (8.0, 100.0),
+}
+
+
+def parse_lab_text(text: str) -> tuple[dict, list[str]]:
+    """Best-effort extraction of the 8 model inputs from lab-report text.
+
+    Returns (values, notes). Anything implausible is rejected into `notes` so
+    the clinician sees why a field was left blank instead of getting a wrong
+    number silently prefilled.
+    """
+    low = " ".join(text.lower().split())  # collapse newlines/spacing
+    found: dict = {}
+    notes: list[str] = []
+
+    for feat, patterns in EXTRACTION_PATTERNS.items():
+        for pat in patterns:
+            m = re.search(pat, low)
+            if not m:
+                continue
+            try:
+                val = float(m.group(1))
+            except (TypeError, ValueError):
+                continue
+            lo, hi = PLAUSIBLE[feat]
+            if lo <= val <= hi:
+                found[feat] = val
+            else:
+                notes.append(
+                    f"{FEATURE_LABELS.get(feat, feat)}: ignored {val:g} "
+                    f"(outside the plausible range {lo:g}-{hi:g}); please enter it manually."
+                )
+            break
+
+    for feat, patterns in BINARY_PATTERNS.items():
+        for pat in patterns:
+            m = re.search(pat, low)
+            if not m:
+                continue
+            found[feat] = 1 if m.group(1).strip() in _AFFIRMATIVE else 0
+            break
+
+    return found, notes
+
+
+def compute_lime(resolved: dict) -> list["LimeContribution"]:
+    """Local surrogate explanation for one patient.
+
+    The explainer was built on unscaled training data so its rules read in
+    clinical units, which means the predict function must scale before calling
+    the model. LIME reports one weighted rule per feature; the rule text (e.g.
+    "serum_creatinine > 0.98") is what makes it complementary to SHAP.
+    """
+    row = np.array([resolved[f] for f in features], dtype=np.float64)
+
+    def predict_fn(data: np.ndarray) -> np.ndarray:
+        return calibrated_model.predict_proba(scaler.transform(np.asarray(data)))
+
+    exp = lime_explainer.explain_instance(
+        row,
+        predict_fn,
+        num_features=len(features),
+        num_samples=LIME_SAMPLES,
+        labels=(1,),
+    )
+
+    pairs = exp.as_list(label=1)
+    total = sum(abs(w) for _, w in pairs) or 1.0
+
+    out: list[LimeContribution] = []
+    for condition, weight in pairs:
+        # Map the rule back to its feature by longest-name-first match, so
+        # "blood_urea_nitrogen" isn't shadowed by a shorter overlapping name.
+        feat = next((f for f in sorted(features, key=len, reverse=True)
+                     if f in condition), condition)
+        out.append(LimeContribution(
+            feature=feat,
+            label=FEATURE_LABELS.get(feat, feat),
+            value=resolved.get(feat, float("nan")),
+            condition=condition,
+            lime_weight=round(float(weight), 6),
+            abs_contribution_pct=round(abs(float(weight)) / total * 100, 2),
+            direction="increases risk" if weight > 0 else "reduces risk",
+        ))
+    out.sort(key=lambda c: -c.abs_contribution_pct)
+    return out
+
+
 # ── Routes ───────────────────────────────────────────────────────
 @app.get("/")
 def root():
@@ -285,8 +510,9 @@ def health():
         model="Stacking Ensemble (RF + GB + XGBoost -> LR)",
         features=features,
         threshold=round(optimal_threshold, 4),
-        version="1.1.0",
+        version="1.2.0",
         shap_enabled=shap_explainer is not None,
+        lime_enabled=lime_explainer is not None,
     )
 
 
@@ -375,6 +601,19 @@ def explain(patient: PatientFeatures):
         ]
         contributions.sort(key=lambda c: -c.abs_contribution_pct)
 
+        # ── LIME (optional, runs alongside SHAP) ─────────────────
+        lime_contribs: list[LimeContribution] = []
+        if lime_explainer is not None:
+            try:
+                lime_contribs = compute_lime(resolved)
+            except Exception as exc:  # noqa: BLE001 - SHAP result still stands
+                print(f"[WARN] LIME explanation failed: {exc}")
+
+        shap_top = {c.feature for c in contributions[:3]}
+        lime_top = {c.feature for c in lime_contribs[:3]}
+        agreement = [FEATURE_LABELS.get(f, f) for f in features
+                     if f in shap_top and f in lime_top]
+
         return Explanation(
             kd_risk_score=round(prob_kd, 4),
             predicted_class=pred_label,
@@ -386,6 +625,11 @@ def explain(patient: PatientFeatures):
                 "Attributions describe the model's reasoning, not clinical "
                 "causation. For research and decision support only."
             ),
+            lime_contributions=lime_contribs,
+            lime_method=("LIME tabular (local surrogate, "
+                         f"{LIME_SAMPLES} perturbations)" if lime_contribs else None),
+            lime_available=bool(lime_contribs),
+            agreement=agreement,
         )
 
     except HTTPException:
@@ -409,6 +653,60 @@ def predict_batch(patients: list[PatientFeatures]):
         except HTTPException as e:
             out.append({"index": i, "error": e.detail, "status": e.status_code})
     return out
+
+
+@app.post("/extract", response_model=ExtractionResult, tags=["PDF"])
+async def extract(file: UploadFile = File(...)):
+    """Pull the 8 model inputs out of a lab-report PDF.
+
+    Deliberately extract-only: it never predicts. The clinician reviews and
+    corrects the parsed values in the UI, then submits them to /predict. Lab
+    formats vary far too much to trust a silent parse in a clinical tool.
+    """
+    if not PDF_AVAILABLE:
+        raise HTTPException(
+            status_code=503,
+            detail="PDF processing is not available on this server.",
+        )
+    if not (file.filename or "").lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only .pdf files are accepted.")
+
+    try:
+        pdf_bytes = await file.read()
+        text = ""
+        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+            for page in pdf.pages:
+                text += (page.extract_text() or "") + "\n"
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"Could not read PDF: {exc}")
+
+    if not text.strip():
+        raise HTTPException(
+            status_code=422,
+            detail="No readable text found. The PDF is likely a scan or image; "
+                   "please enter the values manually.",
+        )
+
+    extracted, notes = parse_lab_text(text)
+    missing = [f for f in features if f not in extracted]
+
+    return ExtractionResult(
+        filename=file.filename or "upload.pdf",
+        extracted_values=extracted,
+        display_values={FEATURE_LABELS.get(k, k): v for k, v in extracted.items()},
+        missing_fields=missing,
+        extraction_confidence=round(len(extracted) / len(features) * 100, 1),
+        fields_extracted=len(extracted),
+        fields_expected=len(features),
+        notes=notes,
+        instructions=(
+            "Review every value against the original report before predicting. "
+            "Correct anything misread and fill any missing field, then submit "
+            "to /predict."
+        ),
+    )
 
 
 if __name__ == "__main__":

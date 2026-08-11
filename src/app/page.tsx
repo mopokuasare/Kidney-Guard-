@@ -11,8 +11,10 @@ import { PageHeader, Disclaimer } from '@/components/ui';
 import {
   checkApiHealth,
   predictRisk,
+  extractFromPdf,
   validatePatientInput,
   savePrediction,
+  FEATURE_LABELS,
   type PatientFeatures,
   type RiskAssessment,
 } from '@/lib/ckdService';
@@ -37,6 +39,7 @@ import {
   Wifi,
   WifiOff,
   FileDown,
+  Upload,
 } from 'lucide-react';
 
 type FormState = {
@@ -75,6 +78,12 @@ export default function PredictRisk() {
   // keys its SHAP fetch on this object.
   const [submitted, setSubmitted] = useState<PatientFeatures | null>(null);
   const [online, setOnline] = useState<boolean | null>(null);
+
+  // PDF lab-report upload → extract → clinician verifies → predict
+  const [pdfBusy, setPdfBusy] = useState(false);
+  const [pdfStatus, setPdfStatus] = useState<string | null>(null);
+  const [pdfNotes, setPdfNotes] = useState<string[]>([]);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const resultRef = useRef<HTMLDivElement>(null);
 
@@ -131,6 +140,57 @@ export default function PredictRisk() {
     setApiError(null);
     setResult(null);
     setSubmitted(null);
+    setPdfStatus(null);
+    setPdfNotes([]);
+  };
+
+  /**
+   * Parse a lab PDF and prefill the form. Deliberately does NOT predict:
+   * the clinician must eyeball every parsed value first, because lab layouts
+   * vary and a misread number would silently change the risk score.
+   */
+  const handlePdf = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setPdfBusy(true);
+    setApiError(null);
+    setPdfNotes([]);
+    setPdfStatus(t('pdf.extracting'));
+
+    const res = await extractFromPdf(file);
+    setPdfBusy(false);
+    if (fileRef.current) fileRef.current.value = '';
+
+    if (!res.success) {
+      setPdfStatus(null);
+      setApiError(res.error);
+      return;
+    }
+
+    const v = res.data.extracted_values;
+    const str = (n?: number) => (n == null ? undefined : String(n));
+    setForm((prev) => ({
+      ...prev,
+      serum_creatinine: str(v.serum_creatinine) ?? prev.serum_creatinine,
+      blood_urea_nitrogen: str(v.blood_urea_nitrogen) ?? prev.blood_urea_nitrogen,
+      bp_systolic: str(v.bp_systolic) ?? prev.bp_systolic,
+      age: str(v.age) ?? prev.age,
+      albumin_serum: str(v.albumin_serum) ?? prev.albumin_serum,
+      bmi: str(v.bmi) ?? prev.bmi,
+    }));
+    if (v.diabetes_diagnosed != null) setDiabetes(v.diabetes_diagnosed === 1);
+    if (v.ever_smoked != null) setEverSmoked(v.ever_smoked === 1);
+
+    const missing = res.data.missing_fields
+      .map((f) => FEATURE_LABELS[f as keyof PatientFeatures] ?? f)
+      .join(', ');
+    setPdfStatus(
+      `${t('pdf.extracted').replace('{n}', String(res.data.fields_extracted))} ` +
+        (missing ? `${t('pdf.missing').replace('{fields}', missing)} ` : '') +
+        t('pdf.verify')
+    );
+    setPdfNotes(res.data.notes ?? []);
   };
 
   return (
@@ -159,9 +219,38 @@ export default function PredictRisk() {
               <RefreshCw size={16} />
               {t('predict.reset')}
             </button>
+            <label className="flex-1 lg:flex-none flex items-center justify-center gap-2 bg-accent hover:bg-accent-hover text-white px-4 py-2 rounded-lg transition-all font-bold text-xs shadow-lg shadow-accent/20 cursor-pointer">
+              {pdfBusy ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />}
+              {t('predict.uploadPdf')}
+              <input
+                ref={fileRef}
+                type="file"
+                accept=".pdf,application/pdf"
+                className="hidden"
+                onChange={handlePdf}
+                disabled={pdfBusy}
+              />
+            </label>
           </>
         }
       />
+
+      {/* Verification step — mandatory before trusting extracted values */}
+      {pdfStatus && (
+        <div className="flex items-start gap-3 bg-blue-50 border border-blue-200 rounded-xl p-3 md:p-4 mb-6">
+          <ClipboardList size={18} className="text-accent shrink-0 mt-0.5" />
+          <div className="text-[11px] md:text-xs text-slate-700 leading-relaxed">
+            <p>{pdfStatus}</p>
+            {pdfNotes.length > 0 && (
+              <ul className="mt-2 list-disc pl-4 text-amber-700">
+                {pdfNotes.map((n, i) => (
+                  <li key={i}>{n}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Stats Grid */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-6 mb-6">

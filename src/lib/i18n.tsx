@@ -103,6 +103,15 @@ const en: Dict = {
   'drivers.topDrivers': 'Top drivers',
   'drivers.note':
     'Shows which measurements pushed this prediction up or down. Reflects model reasoning, not clinical causation.',
+  'drivers.bothAgree': 'Both methods agree',
+  'drivers.agreeHint': 'Independent methods highlighting the same drivers is a good sign.',
+  'drivers.limeNote':
+    'LIME fits a simple local model around this patient and reports the rule each measurement triggered. It approximates the model locally, so it may rank features differently from SHAP.',
+  'drivers.uploadPdf': 'Upload Lab PDF',
+  'pdf.extracting': 'Reading lab report…',
+  'pdf.verify': 'Review every value against the original report before running the prediction.',
+  'pdf.extracted': 'Extracted {n} value(s).',
+  'pdf.missing': 'Could not find: {fields}. Please enter them manually.',
 
   'field.patientName': 'Patient Name',
   'field.age': 'Age',
@@ -206,6 +215,15 @@ const fr: Dict = {
   'drivers.topDrivers': 'Facteurs principaux',
   'drivers.note':
     'Indique quelles mesures ont fait monter ou baisser cette prédiction. Reflète le raisonnement du modèle, non une causalité clinique.',
+  'drivers.bothAgree': 'Les deux méthodes concordent',
+  'drivers.agreeHint': 'Deux méthodes indépendantes qui pointent les mêmes facteurs est un bon signe.',
+  'drivers.limeNote':
+    "LIME ajuste un modèle local simple autour de ce patient et indique la règle déclenchée par chaque mesure. Il s'agit d'une approximation locale : le classement peut différer de SHAP.",
+  'drivers.uploadPdf': 'Importer un PDF de labo',
+  'pdf.extracting': 'Lecture du rapport de laboratoire…',
+  'pdf.verify': 'Vérifiez chaque valeur par rapport au rapport original avant de lancer la prédiction.',
+  'pdf.extracted': '{n} valeur(s) extraite(s).',
+  'pdf.missing': 'Introuvable : {fields}. Veuillez les saisir manuellement.',
 
   'field.patientName': 'Nom du patient',
   'field.age': 'Âge',
@@ -309,6 +327,15 @@ const es: Dict = {
   'drivers.topDrivers': 'Factores principales',
   'drivers.note':
     'Muestra qué mediciones elevaron o redujeron esta predicción. Refleja el razonamiento del modelo, no causalidad clínica.',
+  'drivers.bothAgree': 'Ambos métodos coinciden',
+  'drivers.agreeHint': 'Que dos métodos independientes señalen los mismos factores es buena señal.',
+  'drivers.limeNote':
+    'LIME ajusta un modelo local simple alrededor de este paciente e indica la regla que activó cada medición. Es una aproximación local, por lo que puede ordenar los factores de forma distinta a SHAP.',
+  'drivers.uploadPdf': 'Subir PDF de laboratorio',
+  'pdf.extracting': 'Leyendo el informe de laboratorio…',
+  'pdf.verify': 'Revise cada valor con el informe original antes de ejecutar la predicción.',
+  'pdf.extracted': '{n} valor(es) extraído(s).',
+  'pdf.missing': 'No encontrado: {fields}. Introdúzcalos manualmente.',
 
   'field.patientName': 'Nombre del paciente',
   'field.age': 'Edad',

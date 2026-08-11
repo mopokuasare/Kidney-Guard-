@@ -164,6 +164,17 @@ export interface FeatureContribution {
   direction: 'increases risk' | 'reduces risk';
 }
 
+export interface LimeContribution {
+  feature: keyof PatientFeatures;
+  label: string;
+  value: number;
+  /** Human-readable local rule, e.g. "serum_creatinine > 0.98". */
+  condition: string;
+  lime_weight: number;
+  abs_contribution_pct: number;
+  direction: 'increases risk' | 'reduces risk';
+}
+
 export interface Explanation {
   kd_risk_score: number;
   predicted_class: string;
@@ -173,7 +184,58 @@ export interface Explanation {
   top_drivers: string[];
   method: string;
   disclaimer: string;
+  /** Empty when LIME is disabled on the server — render SHAP alone. */
+  lime_contributions?: LimeContribution[];
+  lime_method?: string | null;
+  lime_available?: boolean;
+  /** Features both methods rank in their top 3. */
+  agreement?: string[];
 }
+
+/* ── PDF lab-report extraction ─────────────────────────────────────────────── */
+
+export interface ExtractionResult {
+  filename: string;
+  extracted_values: Partial<Record<keyof PatientFeatures, number>>;
+  display_values: Record<string, number>;
+  missing_fields: string[];
+  extraction_confidence: number;
+  fields_extracted: number;
+  fields_expected: number;
+  /** Values rejected as implausible, explained for the clinician. */
+  notes: string[];
+  instructions: string;
+}
+
+/**
+ * Parse a lab-report PDF into the 8 model inputs. Extract-only by design: the
+ * clinician verifies and corrects the values before any prediction is run.
+ */
+export const extractFromPdf = async (
+  file: File
+): Promise<ServiceResult<ExtractionResult>> => {
+  if (!file.name.toLowerCase().endsWith('.pdf')) {
+    return { success: false, error: 'Only PDF files are accepted.' };
+  }
+  const formData = new FormData();
+  formData.append('file', file);
+  try {
+    const res = await fetch(`${API_BASE}/extract`, { method: 'POST', body: formData });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      const msg =
+        res.status === 422
+          ? 'This PDF appears to be a scan or image, so no text could be read. Please enter the values manually.'
+          : res.status === 503
+          ? 'PDF processing is not available on this server.'
+          : extractDetail(data) || 'Could not read the PDF.';
+      return { success: false, error: msg, status: res.status };
+    }
+    return { success: true, data: data as ExtractionResult };
+  } catch {
+    return { success: false, error: 'Cannot connect to the prediction server.' };
+  }
+};
 
 /**
  * Per-patient SHAP attribution explaining which features drove the score.

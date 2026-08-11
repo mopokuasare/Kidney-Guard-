@@ -27,3 +27,10 @@ sklearn-compat==0.1.6
 # Required to unpickle shap_explainer.pkl and serve /explain.
 # Set ENABLE_SHAP=0 to skip loading it if the instance runs short on memory.
 shap==0.52.0
+
+# LIME local-surrogate explanations, shown alongside SHAP.
+# ~45 KB training artifact, ~1 s per explanation. ENABLE_LIME=0 to disable.
+lime==0.2.0.1
+
+# PDF lab-report parsing for /extract.
+pdfplumber==0.11.10
