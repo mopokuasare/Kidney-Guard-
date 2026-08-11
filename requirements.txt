@@ -1,23 +1,29 @@
 # NHANES kidney-disease model API (KDIGO-corrected model, joblib-compressed).
-# The .pkl artifacts were saved with scikit-learn 1.8.0 + numpy 2.x, so those
-# are REQUIRED (older versions fail to unpickle with a _loss / numpy._core error).
-fastapi==0.118.0
-uvicorn[standard]==0.34.0
-pydantic==2.11.7
-python-multipart==0.0.20
+#
+# Versions below match the last deploy Render built successfully, so they are
+# known to have wheels for Render's Python. Do not downgrade them casually:
+# older pins can lack wheels on newer Python and fall back to a source build,
+# which fails on Render.
+#
+# scikit-learn 1.8.0 + numpy 2.x are REQUIRED to unpickle the artifacts
+# (older versions fail with a _loss / numpy._core error).
+fastapi==0.141.1
+uvicorn[standard]==0.52.1
+pydantic==2.13.4
+python-multipart==0.0.32
 
 scikit-learn==1.8.0
-numpy==2.5.2
-scipy==1.16.2
-xgboost==3.4.0
+numpy==2.4.6
+scipy==1.18.0
 joblib==1.5.3
+xgboost==3.4.0
 
 # The corrected calibrated model was trained through an imbalanced-learn
-# (SMOTE) pipeline, so imblearn MUST be installed to unpickle it. sklearn-compat
-# is imblearn's shim that lets 0.14.x run against scikit-learn 1.8.0.
+# (SMOTENC) pipeline, so imblearn MUST be installed to unpickle it.
+# sklearn-compat is imblearn's shim so 0.14.x runs against scikit-learn 1.8.0.
 imbalanced-learn==0.14.2
-sklearn-compat==0.1.3
+sklearn-compat==0.1.6
 
 # Required to unpickle shap_explainer.pkl and serve /explain.
-# Set ENABLE_SHAP=0 to skip loading it if memory becomes tight.
+# Set ENABLE_SHAP=0 to skip loading it if the instance runs short on memory.
 shap==0.52.0
