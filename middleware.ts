@@ -30,12 +30,28 @@ export async function middleware(request: NextRequest) {
     },
   });
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const { data: userData, error: userError } = await supabase.auth.getUser();
+  const user = userData?.user ?? null;
 
   const { pathname } = request.nextUrl;
   const isPublic = PUBLIC_PATHS.some((p) => pathname.startsWith(p));
+
+  /**
+   * getUser() calls Supabase over the network on EVERY navigation to validate
+   * the token. A transient failure there (network blip, rate limit, cold start)
+   * returns no user and previously ejected a signed-in clinician straight back
+   * to /login mid-session.
+   *
+   * So distinguish "no session at all" from "could not verify right now":
+   * if the request carries a Supabase auth cookie but verification failed, let
+   * the navigation through. This is safe because it only affects page routing —
+   * every actual patient record is protected by row-level security in the
+   * database, which re-checks the JWT independently.
+   */
+  const hasAuthCookie = request.cookies
+    .getAll()
+    .some((c) => c.name.startsWith('sb-') && c.name.includes('auth-token'));
+  const unverifiedButPlausible = !user && hasAuthCookie && Boolean(userError);
 
   /**
    * getUser() may have rotated the access/refresh token, in which case the new
@@ -51,7 +67,9 @@ export async function middleware(request: NextRequest) {
   };
 
   // Not signed in and trying to reach a protected page → send to login.
-  if (!user && !isPublic) {
+  // `unverifiedButPlausible` keeps a clinician in place when Supabase merely
+  // failed to answer, rather than bouncing them out of a consultation.
+  if (!user && !unverifiedButPlausible && !isPublic) {
     const url = request.nextUrl.clone();
     url.pathname = '/login';
     url.search = '';

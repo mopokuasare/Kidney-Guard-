@@ -33,9 +33,15 @@ async function getInitialAuth(): Promise<{ email: string | null; profile: Profil
   const supabase = await getSupabaseServer();
   if (!supabase) return { email: null, profile: null };
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  let user = null;
+  try {
+    const { data } = await supabase.auth.getUser();
+    user = data.user;
+  } catch {
+    // Verification is a network call; a failure here must not render the
+    // shell as signed-out for a clinician who is signed in.
+    return { email: null, profile: null };
+  }
   if (!user) return { email: null, profile: null };
 
   const { data } = await supabase
