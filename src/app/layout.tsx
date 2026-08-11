@@ -33,13 +33,15 @@ async function getInitialAuth(): Promise<{ email: string | null; profile: Profil
   const supabase = await getSupabaseServer();
   if (!supabase) return { email: null, profile: null };
 
+  // getSession() decodes the session cookie locally, so the shell renders the
+  // right identity without depending on a network call to Supabase. This only
+  // decides what the sidebar displays; patient data is guarded by row-level
+  // security, which verifies the JWT in the database on every query.
   let user = null;
   try {
-    const { data } = await supabase.auth.getUser();
-    user = data.user;
+    const { data } = await supabase.auth.getSession();
+    user = data.session?.user ?? null;
   } catch {
-    // Verification is a network call; a failure here must not render the
-    // shell as signed-out for a clinician who is signed in.
     return { email: null, profile: null };
   }
   if (!user) return { email: null, profile: null };
