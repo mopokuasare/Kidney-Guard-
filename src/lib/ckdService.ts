@@ -383,7 +383,7 @@ export interface PredictionRow {
 export const savePrediction = async (
   input: PatientFeatures,
   result: RiskAssessment,
-  meta?: { patientName?: string; patientRef?: string }
+  meta?: { patientName?: string; patientRef?: string; patientId?: string }
 ): Promise<void> => {
   const supabase = getSupabaseBrowser();
   if (!supabase) return;
@@ -391,9 +391,35 @@ export const savePrediction = async (
   const uid = userData.user?.id;
   if (!uid) return;
 
+  /**
+   * Attach the assessment to a real patient record. If the clinician picked an
+   * existing patient we use that id; otherwise a name typed free-hand is
+   * matched case-insensitively to an existing patient, and only creates a new
+   * record when there is genuinely no match — so "john doe" and "John Doe"
+   * remain one person rather than two.
+   */
+  let patientId = meta?.patientId ?? null;
+  const typedName = meta?.patientName?.trim();
+
+  if (!patientId && typedName) {
+    const { data: found } = await supabase
+      .from('patients')
+      .select('id')
+      .ilike('full_name', typedName)
+      .limit(1);
+
+    if (found?.length) {
+      patientId = (found[0] as { id: string }).id;
+    } else {
+      const created = await createPatient({ full_name: typedName });
+      if (created.success) patientId = created.data.id;
+    }
+  }
+
   await supabase.from('predictions').insert({
     user_id: uid,
-    patient_name: meta?.patientName?.trim() || null,
+    patient_id: patientId,
+    patient_name: typedName || null,
     patient_ref: meta?.patientRef?.trim() || null,
     age: input.age,
     sex: null,
@@ -468,6 +494,125 @@ export const getClinicalStats = async (): Promise<ClinicalStats> => {
     patients: new Set(rows.map((r) => r.patient_name).filter(Boolean)).size,
     lastAt: rows[0]?.created_at ?? null,
   };
+};
+
+/* ── Patient records ───────────────────────────────────────────────────────── */
+
+export interface Patient {
+  id: string;
+  mrn: string | null;
+  full_name: string;
+  date_of_birth: string | null;
+  sex: 'male' | 'female' | 'other' | null;
+  phone: string | null;
+  notes: string | null;
+  created_at: string;
+}
+
+export interface PatientSummary extends Omit<Patient, 'notes' | 'created_at'> {
+  assessment_count: number;
+  last_assessed: string | null;
+  latest_risk: number | null;
+  latest_tier: string | null;
+}
+
+/** Whole-years age from a date of birth, or null if unknown. */
+export const ageFromDob = (dob: string | null): number | null => {
+  if (!dob) return null;
+  const d = new Date(dob);
+  if (Number.isNaN(d.getTime())) return null;
+  const now = new Date();
+  let age = now.getFullYear() - d.getFullYear();
+  const m = now.getMonth() - d.getMonth();
+  if (m < 0 || (m === 0 && now.getDate() < d.getDate())) age--;
+  return age >= 0 && age < 130 ? age : null;
+};
+
+/** Patient list with assessment counts and latest risk, from patient_summary. */
+export const getPatients = async (): Promise<PatientSummary[]> => {
+  const supabase = getSupabaseBrowser();
+  if (!supabase) return [];
+  const { data } = await supabase
+    .from('patient_summary')
+    .select('*')
+    .order('last_assessed', { ascending: false, nullsFirst: false });
+  return (data as PatientSummary[]) ?? [];
+};
+
+export const getPatient = async (id: string): Promise<Patient | null> => {
+  const supabase = getSupabaseBrowser();
+  if (!supabase) return null;
+  const { data } = await supabase.from('patients').select('*').eq('id', id).single();
+  return (data as Patient) ?? null;
+};
+
+export const createPatient = async (
+  patient: Partial<Patient> & { full_name: string }
+): Promise<ServiceResult<Patient>> => {
+  const supabase = getSupabaseBrowser();
+  if (!supabase) return { success: false, error: 'Database is not configured.' };
+  const { data: userData } = await supabase.auth.getUser();
+
+  const { data, error } = await supabase
+    .from('patients')
+    .insert({
+      full_name: patient.full_name.trim(),
+      mrn: patient.mrn?.trim() || null,
+      date_of_birth: patient.date_of_birth || null,
+      sex: patient.sex || null,
+      phone: patient.phone?.trim() || null,
+      notes: patient.notes?.trim() || null,
+      created_by: userData.user?.id ?? null,
+    })
+    .select()
+    .single();
+
+  if (error) {
+    return {
+      success: false,
+      // The unique index on MRN is the most likely failure, and the raw
+      // Postgres message doesn't say which field caused it.
+      error: error.code === '23505'
+        ? 'A patient with that medical record number already exists.'
+        : error.message,
+    };
+  }
+  return { success: true, data: data as Patient };
+};
+
+export const updatePatient = async (
+  id: string,
+  patch: Partial<Patient>
+): Promise<ServiceResult<Patient>> => {
+  const supabase = getSupabaseBrowser();
+  if (!supabase) return { success: false, error: 'Database is not configured.' };
+  const { data, error } = await supabase
+    .from('patients')
+    .update({
+      ...(patch.full_name !== undefined ? { full_name: patch.full_name.trim() } : {}),
+      ...(patch.mrn !== undefined ? { mrn: patch.mrn?.trim() || null } : {}),
+      ...(patch.date_of_birth !== undefined ? { date_of_birth: patch.date_of_birth || null } : {}),
+      ...(patch.sex !== undefined ? { sex: patch.sex || null } : {}),
+      ...(patch.phone !== undefined ? { phone: patch.phone?.trim() || null } : {}),
+      ...(patch.notes !== undefined ? { notes: patch.notes?.trim() || null } : {}),
+    })
+    .eq('id', id)
+    .select()
+    .single();
+  if (error) return { success: false, error: error.message };
+  return { success: true, data: data as Patient };
+};
+
+/** Every assessment for one patient, oldest first, for trend charts. */
+export const getPatientAssessments = async (patientId: string): Promise<PredictionRow[]> => {
+  const supabase = getSupabaseBrowser();
+  if (!supabase) return [];
+  const { data } = await supabase
+    .from('predictions')
+    .select('*')
+    .eq('patient_id', patientId)
+    .order('created_at', { ascending: true });
+  return (data as PredictionRow[]) ?? [];
 };
 
 export interface Aggregates {
