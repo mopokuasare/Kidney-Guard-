@@ -470,6 +470,117 @@ export const getClinicalStats = async (): Promise<ClinicalStats> => {
   };
 };
 
+export interface Aggregates {
+  /** Total assessments recorded. 0 means nothing has been saved yet. */
+  total: number;
+  /** Count per risk tier, in clinical order. */
+  byTier: { label: string; value: number; color: string }[];
+  /** Assessments per month for the last 6 months, oldest first. */
+  monthly: { label: string; value: number }[];
+  /** Count per age band. */
+  byAge: { label: string; value: number; color: string }[];
+  /** Mean risk score across all assessments, 0-100. */
+  meanRisk: number;
+  /** Assessments scoring at or above the referral threshold. */
+  flagged: number;
+  /** Mean of each input feature, for the "typical patient" panel. */
+  featureMeans: { feature: string; label: string; mean: number }[];
+  rows: PredictionRow[];
+}
+
+const TIER_COLORS: Record<string, string> = {
+  'Low Risk': '#10b981',
+  'Moderate Risk': '#f59e0b',
+  'High Risk': '#f97316',
+  'Critical Risk': '#ef4444',
+};
+
+/**
+ * One query, aggregated client-side, shared by Dashboard, Analytics and
+ * Reports. Returns total = 0 when nothing has been recorded, so pages can show
+ * an honest empty state instead of inventing figures.
+ */
+export const getAggregates = async (): Promise<Aggregates> => {
+  const empty: Aggregates = {
+    total: 0, byTier: [], monthly: [], byAge: [], meanRisk: 0, flagged: 0,
+    featureMeans: [], rows: [],
+  };
+  const supabase = getSupabaseBrowser();
+  if (!supabase) return empty;
+
+  const { data } = await supabase
+    .from('predictions')
+    .select('*')
+    .order('created_at', { ascending: false })
+    .limit(2000);
+
+  const rows = (data as PredictionRow[]) ?? [];
+  if (!rows.length) return empty;
+
+  const tiers = ['Low Risk', 'Moderate Risk', 'High Risk', 'Critical Risk'];
+  const byTier = tiers
+    .map((t) => ({
+      label: t.replace(' Risk', ''),
+      value: rows.filter((r) => r.tier === t).length,
+      color: TIER_COLORS[t],
+    }))
+    .filter((d) => d.value > 0);
+
+  // Last 6 months, oldest first.
+  const monthly: { label: string; value: number }[] = [];
+  const now = new Date();
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const next = new Date(d.getFullYear(), d.getMonth() + 1, 1);
+    monthly.push({
+      label: d.toLocaleString(undefined, { month: 'short' }),
+      value: rows.filter((r) => {
+        const t = new Date(r.created_at);
+        return t >= d && t < next;
+      }).length,
+    });
+  }
+
+  const bands: [string, number, number, string][] = [
+    ['18–39', 0, 40, '#10b981'],
+    ['40–59', 40, 60, '#f59e0b'],
+    ['60–74', 60, 75, '#f97316'],
+    ['75+', 75, 200, '#ef4444'],
+  ];
+  const byAge = bands
+    .map(([label, lo, hi, color]) => ({
+      label,
+      value: rows.filter((r) => r.age != null && r.age >= lo && r.age < hi).length,
+      color,
+    }))
+    .filter((d) => d.value > 0);
+
+  const scores = rows.map((r) => Number(r.risk_probability ?? 0));
+  const meanRisk = scores.reduce((a, b) => a + b, 0) / scores.length;
+
+  const featureMeans = FEATURE_ORDER.map((f) => {
+    const vals = rows
+      .map((r) => r.inputs?.[f])
+      .filter((v): v is number => typeof v === 'number');
+    return {
+      feature: f as string,
+      label: FEATURE_LABELS[f],
+      mean: vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 0,
+    };
+  }).filter((d) => d.mean > 0);
+
+  return {
+    total: rows.length,
+    byTier,
+    monthly,
+    byAge,
+    meanRisk: Math.round(meanRisk * 10) / 10,
+    flagged: rows.filter((r) => r.tier === 'High Risk' || r.tier === 'Critical Risk').length,
+    featureMeans,
+    rows,
+  };
+};
+
 /** Distinct patient names that have at least one saved prediction. */
 export const getDistinctPatients = async (): Promise<string[]> => {
   const supabase = getSupabaseBrowser();

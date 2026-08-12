@@ -7,12 +7,6 @@ import { useT } from '@/lib/i18n';
 import { isSupabaseConfigured } from '@/lib/supabase/client';
 import { getRecentPredictions, type PredictionRow } from '@/lib/ckdService';
 
-const SAMPLE = [
-  { id: 's1', patient_name: 'Jane Smith', age: 62, inputs: { serum_creatinine: 2.1, blood_urea_nitrogen: 32 }, risk_probability: 68, tier: 'High Risk', created_at: '' },
-  { id: 's2', patient_name: 'Robert Chen', age: 55, inputs: { serum_creatinine: 1.0, blood_urea_nitrogen: 14 }, risk_probability: 12, tier: 'Low Risk', created_at: '' },
-  { id: 's3', patient_name: 'Maria Garcia', age: 71, inputs: { serum_creatinine: 3.5, blood_urea_nitrogen: 48 }, risk_probability: 85, tier: 'Critical Risk', created_at: '' },
-] as unknown as PredictionRow[];
-
 const tierToStatus = (tier?: string | null): string => {
   switch (tier) {
     case 'Low Risk': return 'LOW';
@@ -40,8 +34,9 @@ export const PredictionsTable = () => {
   const [loading, setLoading] = useState(isSupabaseConfigured);
 
   useEffect(() => {
+    // No invented rows: without a database there is simply nothing to show.
     if (!isSupabaseConfigured) {
-      setRows(SAMPLE);
+      setLoading(false);
       return;
     }
     let active = true;

@@ -82,6 +82,33 @@ export const Disclaimer = ({ className }: { className?: string }) => (
   </div>
 );
 
+/* ---------- Honest empty state ----------
+   Shown when nothing has been recorded yet. Deliberately states that there is
+   no data rather than displaying sample figures, so nothing on screen can be
+   mistaken for a real clinical result. */
+export const EmptyState = ({
+  title,
+  hint,
+  icon: Icon,
+  action,
+}: {
+  title: string;
+  hint?: string;
+  icon?: any;
+  action?: React.ReactNode;
+}) => (
+  <div className="flex flex-col items-center justify-center text-center py-12 px-6">
+    {Icon && (
+      <div className="w-11 h-11 rounded-xl bg-slate-100 flex items-center justify-center mb-3">
+        <Icon size={20} className="text-slate-400" />
+      </div>
+    )}
+    <p className="text-sm font-bold text-slate-700">{title}</p>
+    {hint && <p className="text-xs text-slate-400 mt-1 max-w-sm leading-relaxed">{hint}</p>}
+    {action && <div className="mt-4">{action}</div>}
+  </div>
+);
+
 /* ---------- Simple stat pill ---------- */
 export const StatPill = ({ label, value, tone = 'slate' }: { label: string; value: string; tone?: 'slate' | 'emerald' | 'orange' | 'red' | 'blue' }) => {
   const tones: Record<string, string> = {
