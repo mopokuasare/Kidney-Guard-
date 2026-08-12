@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { AppShell } from '@/components/AppShell';
 import { PageHeader, Panel, EmptyState } from '@/components/ui';
 import { useT, LANGUAGES, type Lang } from '@/lib/i18n';
@@ -16,6 +17,9 @@ import {
   Save,
   CheckCircle2,
   Server,
+  Database,
+  Trash2,
+  AlertTriangle,
 } from 'lucide-react';
 
 const ROLE_STYLES: Record<string, string> = {
@@ -40,6 +44,13 @@ export default function Settings() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [team, setTeam] = useState<TeamMember[] | null>(null);
 
+  // Data management
+  const [recordCount, setRecordCount] = useState<number | null>(null);
+  const [confirmClear, setConfirmClear] = useState(false);
+  const [clearing, setClearing] = useState(false);
+  const [clearMsg, setClearMsg] = useState<string | null>(null);
+  const [clearError, setClearError] = useState<string | null>(null);
+
   useEffect(() => {
     setName(profile?.full_name ?? '');
   }, [profile?.full_name]);
@@ -57,6 +68,60 @@ export default function Settings() {
       .order('created_at', { ascending: true })
       .then(({ data }) => setTeam((data as TeamMember[]) ?? []));
   }, []);
+
+  useEffect(() => {
+    const supabase = getSupabaseBrowser();
+    if (!supabase) {
+      setRecordCount(0);
+      return;
+    }
+    supabase
+      .from('predictions')
+      .select('id', { count: 'exact', head: true })
+      .then(({ count }) => setRecordCount(count ?? 0));
+  }, []);
+
+  /**
+   * Irreversible. Row-level security decides the actual scope: a clinician can
+   * only delete their own records, an admin can delete any. The count is
+   * re-read afterwards so the UI reflects what was really removed rather than
+   * assuming everything went.
+   */
+  const clearRecords = async () => {
+    const supabase = getSupabaseBrowser();
+    if (!supabase) return;
+    setClearing(true);
+    setClearError(null);
+    setClearMsg(null);
+
+    const before = recordCount ?? 0;
+    // `neq` on a never-null column matches every row the policy permits.
+    const { error } = await supabase
+      .from('predictions')
+      .delete()
+      .neq('id', '00000000-0000-0000-0000-000000000000');
+
+    if (error) {
+      setClearing(false);
+      setClearError(error.message);
+      return;
+    }
+
+    const { count } = await supabase
+      .from('predictions')
+      .select('id', { count: 'exact', head: true });
+    const remaining = count ?? 0;
+
+    setClearing(false);
+    setConfirmClear(false);
+    setRecordCount(remaining);
+    setClearMsg(
+      remaining === 0
+        ? `Deleted ${before} record${before === 1 ? '' : 's'}.`
+        : `Deleted ${before - remaining} record${before - remaining === 1 ? '' : 's'}. ` +
+          `${remaining} remain — those were created by other clinicians and only an administrator can remove them.`
+    );
+  };
 
   const saveProfile = async () => {
     const supabase = getSupabaseBrowser();
@@ -216,6 +281,100 @@ export default function Settings() {
           Only an administrator can delete another clinician&apos;s records.
         </p>
       </Panel>
+
+      {/* ── Data management ────────────────────────────────────── */}
+      <Panel title="Data Management" icon={Database} className="mb-6">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-100">
+          <div className="min-w-0">
+            <p className="text-sm font-bold text-slate-900">Patient Records</p>
+            <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">
+              Stored in Supabase PostgreSQL — available on any device you sign in from.
+              {recordCount !== null && (
+                <span className="font-medium text-slate-600">
+                  {' '}
+                  {recordCount} assessment{recordCount === 1 ? '' : 's'} saved.
+                </span>
+              )}
+            </p>
+          </div>
+          <Link
+            href="/patients"
+            className="shrink-0 text-center px-4 py-2.5 rounded-xl border border-blue-200 bg-blue-50 text-accent hover:bg-blue-100 transition-colors font-bold text-xs"
+          >
+            View Records
+          </Link>
+        </div>
+
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-4">
+          <div className="min-w-0">
+            <p className="text-sm font-bold text-red-600">Clear All Records</p>
+            <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">
+              Permanently delete patient assessment records. This cannot be undone.
+              {role !== 'admin' && ' You can only delete records you created.'}
+            </p>
+          </div>
+          <button
+            onClick={() => setConfirmClear(true)}
+            disabled={!recordCount || clearing}
+            className="shrink-0 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border border-red-200 bg-red-50 text-red-600 hover:bg-red-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors font-bold text-xs"
+          >
+            {clearing ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+            Clear All
+          </button>
+        </div>
+
+        {/* Deliberate two-step confirmation: this is irreversible. */}
+        {confirmClear && (
+          <div className="mt-4 bg-red-50 border border-red-200 rounded-xl p-4">
+            <p className="text-sm font-bold text-red-700">
+              Delete {recordCount} assessment{recordCount === 1 ? '' : 's'}?
+            </p>
+            <p className="text-xs text-red-700/80 mt-1 leading-relaxed">
+              This permanently removes the records and the history behind your dashboards
+              and trends. It cannot be undone. Consider exporting them first from{' '}
+              <Link href="/reports" className="underline font-medium">Generate Reports</Link>.
+            </p>
+            <div className="flex items-center gap-2 mt-3">
+              <button
+                onClick={clearRecords}
+                disabled={clearing}
+                className="flex items-center gap-2 bg-red-600 hover:bg-red-700 disabled:opacity-60 text-white px-4 py-2 rounded-lg font-bold text-xs"
+              >
+                {clearing ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                Yes, delete permanently
+              </button>
+              <button
+                onClick={() => setConfirmClear(false)}
+                className="px-4 py-2 rounded-lg text-slate-600 hover:bg-white font-bold text-xs"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
+        {clearMsg && (
+          <p className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg p-3 mt-4">
+            {clearMsg}
+          </p>
+        )}
+        {clearError && (
+          <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg p-3 mt-4">
+            {clearError}
+          </p>
+        )}
+      </Panel>
+
+      {/* ── Clinical disclaimer ────────────────────────────────── */}
+      <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-2xl p-4 mb-6">
+        <AlertTriangle size={18} className="text-amber-500 shrink-0 mt-0.5" />
+        <p className="text-xs text-amber-800 leading-relaxed">
+          <span className="font-bold">Clinical Disclaimer:</span> KidneyGuard is intended for
+          risk assessment and decision support only. It does not replace clinical diagnosis or
+          the judgement of a qualified clinician. All outputs must be interpreted in the full
+          clinical context.
+        </p>
+      </div>
 
       {/* ── System ─────────────────────────────────────────────── */}
       <Panel title="System" icon={Server}>
