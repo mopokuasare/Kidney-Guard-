@@ -402,23 +402,28 @@ export const savePrediction = async (
   const typedName = meta?.patientName?.trim();
 
   if (!patientId && typedName) {
-    const { data: found } = await supabase
-      .from('patients')
-      .select('id')
-      .ilike('full_name', typedName)
-      .limit(1);
+    // The patients table only exists once migration_patients.sql has been run.
+    // Failing to reach it must not cost the assessment itself.
+    try {
+      const { data: found } = await supabase
+        .from('patients')
+        .select('id')
+        .ilike('full_name', typedName)
+        .limit(1);
 
-    if (found?.length) {
-      patientId = (found[0] as { id: string }).id;
-    } else {
-      const created = await createPatient({ full_name: typedName });
-      if (created.success) patientId = created.data.id;
+      if (found?.length) {
+        patientId = (found[0] as { id: string }).id;
+      } else {
+        const created = await createPatient({ full_name: typedName });
+        if (created.success) patientId = created.data.id;
+      }
+    } catch {
+      patientId = null;
     }
   }
 
-  await supabase.from('predictions').insert({
+  const row = {
     user_id: uid,
-    patient_id: patientId,
     patient_name: typedName || null,
     patient_ref: meta?.patientRef?.trim() || null,
     age: input.age,
@@ -429,7 +434,21 @@ export const savePrediction = async (
     egfr: null,
     egfr_stage: null,
     inputs: input,
-  });
+  };
+
+  const { error } = await supabase
+    .from('predictions')
+    .insert(patientId ? { ...row, patient_id: patientId } : row);
+
+  /**
+   * Retry without patient_id if that column does not exist yet (Postgres 42703,
+   * or PostgREST's schema-cache message). Otherwise every assessment would be
+   * silently lost on a database where the patients migration has not been run,
+   * and the clinician would see a result on screen that was never recorded.
+   */
+  if (error && (error.code === '42703' || /column .*patient_id/i.test(error.message))) {
+    await supabase.from('predictions').insert(row);
+  }
 };
 
 export const getRecentPredictions = async (limit = 10): Promise<PredictionRow[]> => {
@@ -532,11 +551,17 @@ export const ageFromDob = (dob: string | null): number | null => {
 export const getPatients = async (): Promise<PatientSummary[]> => {
   const supabase = getSupabaseBrowser();
   if (!supabase) return [];
-  const { data } = await supabase
-    .from('patient_summary')
-    .select('*')
-    .order('last_assessed', { ascending: false, nullsFirst: false });
-  return (data as PatientSummary[]) ?? [];
+  // patient_summary only exists after migration_patients.sql has been run;
+  // returning an empty list keeps the page usable until then.
+  try {
+    const { data } = await supabase
+      .from('patient_summary')
+      .select('*')
+      .order('last_assessed', { ascending: false, nullsFirst: false });
+    return (data as PatientSummary[]) ?? [];
+  } catch {
+    return [];
+  }
 };
 
 export const getPatient = async (id: string): Promise<Patient | null> => {
